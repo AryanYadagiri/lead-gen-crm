@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+*/node_modules/
+package-lock.json
+
+# Next.js / Frontend
+.next/
+*/.next/
+out/
+*/out/
+build/
+*/build/
+.vercel/
+
+# Java / Maven Backend
+target/
+*/target/
+.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+*.war
+
+# IDE & Editor files
+.idea/
+*.iml
+.vscode/
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & Debugging
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Environment & Local Secrets
+.env
+.env.*
+*.local
+application.properties.local
+*.properties.local
+
+# Local AI / Agent configs
+.agents/
+.ai/

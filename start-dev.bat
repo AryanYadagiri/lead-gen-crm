@@ -1,0 +1,3 @@
+@echo off
+echo Starting Backend (Spring Boot) and Frontend (Next.js)...
+npm run dev

@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #0b0b0b;
+  --color-canvas-soft: #212121;
+  --color-canvas-light: #ffffff;
+  --color-canvas-paper: #ededed;
+  --color-brand: #f36458;
+  --color-brand-deep: #dd0000;
+  --color-ink: #0b0b0b;
+  --color-ink-soft: #212121;
+  --color-graphite: #353535;
+  --color-slate: #3c4758;
+  --color-slate-soft: #505b6c;
+  --color-mute: #797979;
+  --color-ash: #b9b9b9;
+  --color-hairline: #ededed;
+  --color-hairline-soft: #353535;
+  --color-surface-blue-bg: #afe3ff;
+  --color-link-blue: #0052ef;
+  --color-link-blue-soft: #55beff;
+  --color-success: #37cd84;
+  --color-error: #dd0000;
+
+  --radius-app-xs: 3px;
+  --radius-app-sm: 4px;
+  --radius-app-md: 5px;
+  --radius-app-lg: 6px;
+  --radius-marketing: 12px;
+
+  --font-sans: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-geist-mono), monospace;
+}
+
+:root {
+  --background: #0b0b0b;
+  --foreground: #ffffff;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+/* Custom Scrollbar for Studio Dark Aesthetics */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0b0b0b;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #353535;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #505b6c;
+}

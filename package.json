@@ -1,0 +1,15 @@
+{
+  "name": "lead-gen-crm",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Root workspace to run backend (Spring Boot) and frontend (Next.js)",
+  "scripts": {
+    "dev": "concurrently -n \"BACKEND,FRONTEND\" -c \"blue.bold,green.bold\" --kill-others-on-fail \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd lead-generation && mvnw.cmd spring-boot:run",
+    "dev:frontend": "npm run dev --prefix lead-automation",
+    "start": "npm run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}

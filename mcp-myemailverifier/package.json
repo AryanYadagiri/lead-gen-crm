@@ -1,0 +1,9 @@
+{
+  "name": "myemailverifier-mcp",
+  "version": "1.0.0",
+  "description": "Local MCP server for MyEmailVerifier documentation and verification",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
