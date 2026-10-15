@@ -13,4 +13,5 @@ public interface LeadSequenceTrackerRepository extends JpaRepository<LeadSequenc
     List<LeadSequenceTracker> findByStatusAndNextExecutionTimeLessThanEqual(String status, LocalDateTime nextExecutionTime);
     Optional<LeadSequenceTracker> findByLeadIdAndCampaignId(String leadId, Long campaignId);
     List<LeadSequenceTracker> findByCampaignId(Long campaignId);
+    void deleteByCampaignId(Long campaignId);
 }

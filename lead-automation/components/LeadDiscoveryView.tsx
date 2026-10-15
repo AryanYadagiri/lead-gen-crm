@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { QueriedLead, Lead, FilterState, LeadFiltersPayload } from '../types/lead';
 import { getLeads } from '../utils/apiClient';
-import { AVAILABLE_COUNTRIES, SENIORITY_OPTIONS, EMPLOYEE_RANGE_OPTIONS, INITIAL_LEADS } from '../data/mockLeads';
+import { AVAILABLE_COUNTRIES, SENIORITY_OPTIONS, EMPLOYEE_RANGE_OPTIONS } from '../data/mockLeads';
 import {
   Search, Filter, X, Check, Globe, Building2, Briefcase,
   DollarSign, Sparkles, UserCheck, ChevronDown, CheckSquare,
@@ -39,7 +39,6 @@ export const LeadDiscoveryView: React.FC<LeadDiscoveryViewProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [lastPayload, setLastPayload] = useState<LeadFiltersPayload | null>(null);
-  const [isUsingFallback, setIsUsingFallback] = useState<boolean>(false);
 
   // Country Search Combobox & Modal State
   const [countrySearch, setCountrySearch] = useState('');
@@ -53,7 +52,6 @@ export const LeadDiscoveryView: React.FC<LeadDiscoveryViewProps> = ({
   const fetchLeadsFromSpringBoot = useCallback(async (activeFilters: FilterState) => {
     setIsLoading(true);
     setError(null);
-    setIsUsingFallback(false);
 
     // Map React state into exact Java Spring Boot DTO record structure: LeadFilters
     const payload: LeadFiltersPayload = {
@@ -89,21 +87,7 @@ export const LeadDiscoveryView: React.FC<LeadDiscoveryViewProps> = ({
         errMsg = err.response?.data?.message || err.message || errMsg;
       }
       setError(errMsg);
-
-      // Fallback data mapping if Spring Boot server is offline locally
-      setIsUsingFallback(true);
-      const fallbackData: QueriedLead[] = INITIAL_LEADS.map((l) => {
-        const parts = l.name.split(' ');
-        return {
-          firstName: parts[0] || '',
-          lastName: parts.slice(1).join(' ') || '',
-          email: l.email,
-          phoneNumber: l.phone,
-          title: l.title,
-          organization: l.company,
-        };
-      });
-      setQueriedLeads(fallbackData);
+      setQueriedLeads([]);
     } finally {
       setIsLoading(false);
     }
@@ -258,11 +242,13 @@ export const LeadDiscoveryView: React.FC<LeadDiscoveryViewProps> = ({
     <div className="w-full max-w-[1640px] mx-auto px-4 md:px-8 py-6 space-y-6">
 
       {/* Editorial Header */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between border-b border-[#353535] pb-6 gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-[#353535] pb-6 gap-4">
         <div>
-          <span className="text-xs font-mono text-[#f36458] uppercase tracking-widest block mb-1">
-            Prospecting & Filtering
-          </span>
+          <div className="flex items-center gap-3 mb-1 min-h-[22px]">
+            <span className="text-xs font-mono text-[#f36458] uppercase tracking-widest block">
+              Prospecting & Filtering
+            </span>
+          </div>
           <h1 className="text-3xl md:text-4xl font-normal tracking-tight text-white font-sans">
             Lead Discovery Engine
           </h1>
@@ -288,17 +274,8 @@ export const LeadDiscoveryView: React.FC<LeadDiscoveryViewProps> = ({
       </div>
 
       {/* Search Overview & Results Summary Bar */}
-      <div className="bg-[#212121] border border-[#353535] rounded-xl p-3 px-4 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-[#37cd84]" />
-          <span className="text-[#b9b9b9]">Database Status:</span>
-          <span className="text-white font-semibold">Active & Synced</span>
-          {isUsingFallback && (
-            <span className="ml-2 text-[#f36458] bg-[#f36458]/10 px-2.5 py-0.5 rounded border border-[#f36458]/30 flex items-center gap-1.5 text-[11px]">
-              <AlertTriangle className="w-3 h-3" /> Offline Preview Data
-            </span>
-          )}
-        </div>
+      <div className="bg-[#212121] border border-[#353535] rounded-xl p-3 px-5 flex flex-wrap items-center justify-between gap-4 text-xs font-mono min-h-[50px]">
+        <div />
 
         <div className="flex items-center gap-3">
           <span className="text-[#b9b9b9]">Total Matches:</span>
@@ -610,9 +587,6 @@ export const LeadDiscoveryView: React.FC<LeadDiscoveryViewProps> = ({
                   >
                     Retry Search
                   </button>
-                  <span className="text-[10px] text-[#797979] font-mono">
-                    (Displaying cached leads for offline preview)
-                  </span>
                 </div>
               </div>
             </div>

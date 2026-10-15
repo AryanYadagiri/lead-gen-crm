@@ -37,6 +37,11 @@
   --foreground: #ffffff;
 }
 
+html {
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+}
+
 body {
   background-color: var(--background);
   color: var(--foreground);

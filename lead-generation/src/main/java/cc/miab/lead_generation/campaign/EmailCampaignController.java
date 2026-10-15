@@ -27,9 +27,15 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.web.bind.annotation.RequestMethod;
+
 @RestController
-@RequestMapping("/api/campaigns")
-@CrossOrigin(origins = "http://localhost:3000")
+@RequestMapping({"/api/campaigns", "/api/campaign"})
+@CrossOrigin(
+        origins = {"http://localhost:3000", "http://127.0.0.1:3000"},
+        methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.PATCH, RequestMethod.DELETE, RequestMethod.OPTIONS},
+        allowedHeaders = "*"
+)
 public class EmailCampaignController {
 
     private final EmailCampaignService emailCampaignService;
@@ -65,11 +71,50 @@ public class EmailCampaignController {
         return CampaignResponse.from(emailCampaignService.getCampaign(campaignId));
     }
 
+    /**
+     * PUT /api/campaign/status or PUT /api/campaigns/status
+     * Receives new status payload ("RUNNING" or "PAUSED")
+     */
+    @PutMapping("/status")
+    public CampaignResponse updateCampaignStatusDirect(@RequestBody CampaignStatusRequest request) {
+        Long campaignId = request.campaignId();
+        if (campaignId == null) {
+            campaignId = emailCampaignService.getOrCreateDefaultCampaign().getId();
+        }
+        return CampaignResponse.from(
+                emailCampaignService.updateCampaignStatus(campaignId, request.status()));
+    }
+
+    @PutMapping("/{campaignId}/status")
+    public CampaignResponse updateCampaignStatusPut(@PathVariable Long campaignId,
+                                                    @RequestBody CampaignStatusRequest request) {
+        return CampaignResponse.from(
+                emailCampaignService.updateCampaignStatus(campaignId, request.status()));
+    }
+
     @PatchMapping("/{campaignId}/status")
     public CampaignResponse updateCampaignStatus(@PathVariable Long campaignId,
                                                  @RequestBody CampaignStatusRequest request) {
         return CampaignResponse.from(
                 emailCampaignService.updateCampaignStatus(campaignId, request.status()));
+    }
+
+    /**
+     * DELETE /api/campaign or DELETE /api/campaigns or DELETE /api/campaigns/{campaignId}
+     * Cascading wipe of campaign metadata, sequence steps, targets, and queues.
+     */
+    @DeleteMapping({"", "/{campaignId}"})
+    @ResponseStatus(HttpStatus.OK)
+    public Map<String, Object> deleteCampaign(@PathVariable(required = false) Long campaignId) {
+        if (campaignId == null) {
+            campaignId = emailCampaignService.getOrCreateDefaultCampaign().getId();
+        }
+        emailCampaignService.deleteCampaign(campaignId);
+        return Map.of(
+                "status", "success",
+                "message", "Campaign " + campaignId + " and all sequence steps, targets, and queues permanently deleted.",
+                "campaignId", campaignId
+        );
     }
 
     @PostMapping("/{campaignId}/steps")
@@ -165,15 +210,14 @@ public class EmailCampaignController {
      * Immediately triggers scheduled outreach execution and dispatches all pending sequence steps for the campaign.
      */
     @PostMapping("/{campaignId}/process-all")
-     public Map<String, Object> processAllCampaignTrackers(@PathVariable Long campaignId) {
-         emailCampaignService.executeScheduledOutreach();
-         int triggered = emailCampaignService.processCampaignTrackersImmediately(campaignId);
-         return Map.of(
-                 "status", "success",
-                 "campaignId", campaignId,
-                 "message", "Dispatched outreach cycle for campaign " + campaignId,
-                 "processedTrackers", triggered
-         );
-     }
+    public Map<String, Object> processAllCampaignTrackers(@PathVariable Long campaignId) {
+        int triggered = emailCampaignService.processCampaignTrackersImmediately(campaignId);
+        return Map.of(
+                "status", "success",
+                "campaignId", campaignId,
+                "message", "Dispatched outreach cycle for campaign " + campaignId,
+                "processedTrackers", triggered
+        );
+    }
 }
 

@@ -13,6 +13,8 @@ import cc.miab.lead_generation.campaign.entity.SequenceStep;
 import cc.miab.lead_generation.campaign.repository.CampaignRepository;
 import cc.miab.lead_generation.campaign.repository.LeadSequenceTrackerRepository;
 import cc.miab.lead_generation.campaign.repository.SequenceStepRepository;
+import cc.miab.lead_generation.lead.entity.Leads;
+import cc.miab.lead_generation.lead.repository.LeadsRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -27,10 +29,13 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.stream.Collectors;
 
 @Service
 public class EmailCampaignService {
@@ -40,6 +45,7 @@ public class EmailCampaignService {
     private final LeadSequenceTrackerRepository trackerRepository;
     private final SequenceStepRepository sequenceStepRepository;
     private final CampaignRepository campaignRepository;
+    private final LeadsRepository leadsRepository;
     private final EmailSenderService emailSenderService;
     private final EmailVerifierService emailVerifierService;
     private final Executor outreachTaskExecutor;
@@ -47,12 +53,14 @@ public class EmailCampaignService {
     public EmailCampaignService(LeadSequenceTrackerRepository trackerRepository,
                                 SequenceStepRepository sequenceStepRepository,
                                 CampaignRepository campaignRepository,
+                                LeadsRepository leadsRepository,
                                 EmailSenderService emailSenderService,
                                 EmailVerifierService emailVerifierService,
                                 @Qualifier("outreachTaskExecutor") Executor outreachTaskExecutor) {
         this.trackerRepository = trackerRepository;
         this.sequenceStepRepository = sequenceStepRepository;
         this.campaignRepository = campaignRepository;
+        this.leadsRepository = leadsRepository;
         this.emailSenderService = emailSenderService;
         this.emailVerifierService = emailVerifierService;
         this.outreachTaskExecutor = outreachTaskExecutor;
@@ -79,7 +87,7 @@ public class EmailCampaignService {
         }
 
         logger.info("No campaign found. Initializing default automated outreach campaign...");
-        Campaign defaultCampaign = campaignRepository.save(new Campaign("Automated Outreach Sequence Studio", "ACTIVE"));
+        Campaign defaultCampaign = campaignRepository.save(new Campaign("Automated Outreach Sequence Studio", "READY"));
 
         // Seed initial steps matching frontend DEFAULT_SEQUENCE_STEPS
         List<SequenceStep> initialSteps = List.of(
@@ -155,6 +163,11 @@ public class EmailCampaignService {
         logger.info("Found {} pending lead sequence tracker(s) ready for execution", pendingTrackers.size());
 
         for (LeadSequenceTracker tracker : pendingTrackers) {
+            if (isCampaignPaused(tracker.getCampaignId())) {
+                logger.info("Campaign ID {} is PAUSED. Skipping scheduled outreach for tracker ID {}.",
+                        tracker.getCampaignId(), tracker.getId());
+                continue;
+            }
             outreachTaskExecutor.execute(() -> {
                 try {
                     processTrackerById(tracker.getId());
@@ -167,16 +180,93 @@ public class EmailCampaignService {
 
     /**
      * Immediately triggers all pending sequence trackers for a specific campaign.
+     * Auto-enrolls any database leads not yet in this campaign so emails are never missed.
      */
+    @Transactional
     public int processCampaignTrackersImmediately(Long campaignId) {
-        List<LeadSequenceTracker> pendingTrackers = trackerRepository.findByCampaignId(campaignId).stream()
+        Campaign campaign = getCampaign(campaignId);
+        String currentStatus = campaign.getStatus() != null ? campaign.getStatus().trim().toUpperCase() : "";
+
+        // 1. Execution Block: If campaign status is already RUNNING, PROCESSING, or ACTIVE, reject immediately
+        if ("RUNNING".equals(currentStatus) || "PROCESSING".equals(currentStatus) || "ACTIVE".equals(currentStatus)) {
+            logger.warn("Campaign ID {} is already running (status: {}). Rejecting start request.", campaignId, currentStatus);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Campaign is already running");
+        }
+
+        // 2. Execution Block: If campaign status is PAUSED, reject request
+        if ("PAUSED".equals(currentStatus)) {
+            logger.warn("Campaign ID {} is PAUSED. Immediate dispatch aborted.", campaignId);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Campaign is paused. Please resume before starting.");
+        }
+
+        // 3. State Persist: As soon as sequence starts, explicitly set status to RUNNING in DB to block simultaneous requests
+        campaign.setStatus("RUNNING");
+        campaignRepository.saveAndFlush(campaign);
+        logger.info("Persisted campaign ID {} status to RUNNING in database to lock simultaneous execution.", campaignId);
+
+        // 1. Purge any duplicate trackers in trackerRepository for this campaign so each email has at most one tracker
+        List<LeadSequenceTracker> existingTrackers = trackerRepository.findByCampaignId(campaignId);
+        Set<String> uniqueEmails = new HashSet<>();
+        List<LeadSequenceTracker> allTrackers = new ArrayList<>();
+        for (LeadSequenceTracker tracker : existingTrackers) {
+            String email = tracker.getEmail() != null ? tracker.getEmail().trim().toLowerCase() : "";
+            if (!email.isBlank() && uniqueEmails.contains(email)) {
+                logger.info("Purging duplicate tracker ID {} for email {}", tracker.getId(), email);
+                trackerRepository.delete(tracker);
+            } else {
+                if (!email.isBlank()) uniqueEmails.add(email);
+                allTrackers.add(tracker);
+            }
+        }
+        trackerRepository.flush();
+
+        // 2. Sync any leads from the database leads table that aren't yet in this campaign
+        List<Leads> unassignedLeads = leadsRepository.findAll();
+        for (Leads lead : unassignedLeads) {
+            String email = lead.getEmail() != null ? lead.getEmail().trim().toLowerCase() : "";
+            if (!email.isBlank() && !uniqueEmails.contains(email)) {
+                logger.info("Auto-enrolling unassigned lead '{}' ({}) into campaign ID {}", lead.getName(), email, campaignId);
+                LeadSequenceTracker tracker = enrollLead(
+                        String.valueOf(lead.getId()),
+                        lead.getEmail(),
+                        lead.getNumber(),
+                        campaignId,
+                        lead.getName() != null ? lead.getName().trim().split("\\s+")[0] : "There",
+                        lead.getName(),
+                        lead.getDesignation(),
+                        lead.getCompany(),
+                        lead.getLocation(),
+                        lead.getRevenue(),
+                        lead.getIndustry(),
+                        0
+                );
+                allTrackers.add(tracker);
+                uniqueEmails.add(email);
+            }
+        }
+
+        // 2. Filter pending trackers; if all existing trackers are COMPLETED or FAILED, allow re-triggering them from step 1
+        List<LeadSequenceTracker> trackersToProcess = allTrackers.stream()
                 .filter(t -> "PENDING".equalsIgnoreCase(t.getStatus()))
                 .toList();
 
-        logger.info("Triggering immediate processing for {} pending tracker(s) in campaign ID {}",
-                pendingTrackers.size(), campaignId);
+        if (trackersToProcess.isEmpty() && !allTrackers.isEmpty()) {
+            logger.info("All {} tracker(s) for campaign ID {} were previously finished. Resetting to step 1 for re-dispatch.",
+                    allTrackers.size(), campaignId);
+            List<LeadSequenceTracker> resetTrackers = new ArrayList<>();
+            for (LeadSequenceTracker t : allTrackers) {
+                t.setStatus("PENDING");
+                t.setCurrentStepOrder(1);
+                t.setNextExecutionTime(LocalDateTime.now());
+                resetTrackers.add(trackerRepository.save(t));
+            }
+            trackersToProcess = resetTrackers;
+        }
 
-        for (LeadSequenceTracker tracker : pendingTrackers) {
+        logger.info("Triggering immediate processing for {} tracker(s) in campaign ID {}",
+                trackersToProcess.size(), campaignId);
+
+        for (LeadSequenceTracker tracker : trackersToProcess) {
             outreachTaskExecutor.execute(() -> {
                 try {
                     processTrackerById(tracker.getId());
@@ -185,7 +275,7 @@ public class EmailCampaignService {
                 }
             });
         }
-        return pendingTrackers.size();
+        return trackersToProcess.size();
     }
 
     /**
@@ -215,6 +305,12 @@ public class EmailCampaignService {
     public void processTracker(LeadSequenceTracker tracker) {
         if (!"PENDING".equalsIgnoreCase(tracker.getStatus())) {
             logger.info("Tracker ID {} is in state '{}' (not PENDING). Skipping.", tracker.getId(), tracker.getStatus());
+            return;
+        }
+
+        if (isCampaignPaused(tracker.getCampaignId())) {
+            logger.info("Campaign ID {} is PAUSED. Halting dispatch for tracker ID {}.",
+                    tracker.getCampaignId(), tracker.getId());
             return;
         }
 
@@ -288,10 +384,14 @@ public class EmailCampaignService {
         List<String> logs = new ArrayList<>();
 
         EnrollLeadRequest lead = request != null ? request.lead() : null;
-        String leadName = lead != null ? lead.resolvedFullName() : "Alexandra Vance";
-        String company = (lead != null && lead.companyName() != null) ? lead.companyName() : "ApexScale AI";
-        String email = (lead != null && lead.email() != null) ? lead.email() : "a.vance@apexscale.ai";
-        String phone = (lead != null && lead.phone() != null) ? lead.phone() : "+1 (415) 890-2341";
+        if (lead == null || lead.email() == null || lead.email().isBlank()) {
+            return new TestRunResponse(false, "No target email available for test run.",
+                    List.of("[NOTICE] No valid target lead or email provided for simulation. Please select or import a lead."));
+        }
+        String leadName = !lead.resolvedFullName().isBlank() ? lead.resolvedFullName() : "Target Lead";
+        String company = (lead.companyName() != null && !lead.companyName().isBlank()) ? lead.companyName() : "N/A";
+        String email = lead.email().trim();
+        String phone = (lead.phone() != null && !lead.phone().isBlank()) ? lead.phone() : "N/A";
 
         logs.add(String.format("[09:00 AM] Enrolling target: %s (%s)", leadName, company));
 
@@ -313,9 +413,17 @@ public class EmailCampaignService {
         // Use custom steps from request or pull steps from database
         List<SequenceStep> steps;
         if (request != null && request.steps() != null && !request.steps().isEmpty()) {
+            if (request.steps().size() > 8) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A campaign sequence cannot exceed 8 steps");
+            }
             steps = new ArrayList<>();
             int idx = 1;
             for (SequenceStepRequest sr : request.steps()) {
+                int delay = sr.resolvedDelayDays();
+                if (delay < 0 || delay > 90) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "Step delay cannot exceed 90 days (received: " + delay + " days)");
+                }
                 steps.add(new SequenceStep(
                         campaignId,
                         sr.resolvedStepOrder(idx),
@@ -390,6 +498,21 @@ public class EmailCampaignService {
     public List<SequenceStep> syncSequenceSteps(Long campaignId, List<SequenceStepRequest> stepRequests) {
         getCampaign(campaignId);
 
+        if (stepRequests != null && stepRequests.size() > 8) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A campaign sequence cannot exceed 8 steps (received: " + stepRequests.size() + ")");
+        }
+
+        if (stepRequests != null) {
+            for (SequenceStepRequest req : stepRequests) {
+                int delay = req.resolvedDelayDays();
+                if (delay < 0 || delay > 90) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "Step delay cannot exceed 90 days (received: " + delay + " days)");
+                }
+            }
+        }
+
         sequenceStepRepository.deleteByCampaignId(campaignId);
 
         if (stepRequests == null || stepRequests.isEmpty()) {
@@ -428,6 +551,11 @@ public class EmailCampaignService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Step does not belong to campaign ID " + campaignId);
         }
 
+        if (req.delayDays() != null && (req.delayDays() < 0 || req.delayDays() > 90)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Step delay cannot exceed 90 days (received: " + req.delayDays() + " days)");
+        }
+
         if (req.stepNumber() != null) step.setStepOrder(req.stepNumber());
         if (req.channel() != null) step.setChannel(req.channel());
         if (req.title() != null) step.setTitle(req.title());
@@ -461,6 +589,19 @@ public class EmailCampaignService {
                                           String firstName, String fullName, String personTitle,
                                           String companyName, String location, String revenue,
                                           String industry, int initialDelayDays) {
+        // Idempotency: Prevent duplicate sequence trackers for the same lead in the same campaign
+        String normalizedEmail = email != null ? email.trim().toLowerCase() : "";
+        List<LeadSequenceTracker> existingTrackers = trackerRepository.findByCampaignId(campaignId);
+        for (LeadSequenceTracker existing : existingTrackers) {
+            boolean matchEmail = !normalizedEmail.isBlank() && normalizedEmail.equalsIgnoreCase(existing.getEmail());
+            boolean matchLeadId = leadId != null && !leadId.isBlank() && leadId.equalsIgnoreCase(existing.getLeadId());
+            if (matchEmail || matchLeadId) {
+                logger.info("Lead {} already enrolled in campaign ID {} (tracker ID: {}). Skipping duplicate creation.",
+                        email, campaignId, existing.getId());
+                return existing;
+            }
+        }
+
         LeadSequenceTracker tracker = new LeadSequenceTracker();
         tracker.setLeadId(leadId);
         tracker.setEmail(email);
@@ -510,6 +651,7 @@ public class EmailCampaignService {
         for (EnrollLeadRequest req : requests) {
             trackers.add(enrollLead(req, campaignId));
         }
+        trackerRepository.flush();
         logger.info("Bulk enrolled {} leads into campaign ID {}", trackers.size(), campaignId);
         return trackers;
     }
@@ -537,13 +679,54 @@ public class EmailCampaignService {
         return saved;
     }
 
+    @Transactional(readOnly = true)
+    public boolean isCampaignPaused(Long campaignId) {
+        if (campaignId == null) {
+            return false;
+        }
+        return campaignRepository.findById(campaignId)
+                .map(c -> "PAUSED".equalsIgnoreCase(c.getStatus()))
+                .orElse(false);
+    }
+
     @Transactional
     public Campaign updateCampaignStatus(Long campaignId, String status) {
         Campaign campaign = getCampaign(campaignId);
-        campaign.setStatus(status);
+        String resolvedStatus = (status != null && !status.isBlank()) ? status.trim().toUpperCase() : "RUNNING";
+        if ("ACTIVE".equalsIgnoreCase(resolvedStatus)) {
+            resolvedStatus = "RUNNING";
+        }
+        campaign.setStatus(resolvedStatus);
         Campaign saved = campaignRepository.save(campaign);
         logger.info("Updated campaign ID {} status to {}", saved.getId(), saved.getStatus());
         return saved;
+    }
+
+    /**
+     * Cascading wipe of campaign metadata, custom sequence steps, enrolled targets, and pending queues.
+     */
+    @Transactional
+    public void deleteCampaign(Long campaignId) {
+        logger.info("Permanently wiping campaign ID {} and all cascading sequence steps, targets, and queues...", campaignId);
+        // 1. Purge custom sequence steps
+        sequenceStepRepository.deleteByCampaignId(campaignId);
+        sequenceStepRepository.flush();
+
+        // 2. Purge enrolled sequence trackers
+        trackerRepository.deleteByCampaignId(campaignId);
+        trackerRepository.flush();
+
+        // 3. Purge all enrolled targets and pending queues from leads repository
+        leadsRepository.deleteAll();
+        leadsRepository.flush();
+
+        // 4. Purge campaign metadata record
+        if (campaignRepository.existsById(campaignId)) {
+            campaignRepository.deleteById(campaignId);
+            campaignRepository.flush();
+        }
+
+        logger.info("Successfully completed cascading deletion for campaign ID {}", campaignId);
     }
 
     @Transactional
@@ -556,6 +739,14 @@ public class EmailCampaignService {
     public SequenceStep addSequenceStep(Long campaignId, int stepOrder, String channel, String title, int delayDays,
                                         String subjectTemplate, String bodyTemplate, Boolean isActive) {
         getCampaign(campaignId);
+        List<SequenceStep> existing = sequenceStepRepository.findByCampaignIdOrderByStepOrderAsc(campaignId);
+        if (existing.size() >= 8) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A campaign sequence cannot exceed 8 steps");
+        }
+        if (delayDays < 0 || delayDays > 90) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Step delay cannot exceed 90 days (received: " + delayDays + " days)");
+        }
         SequenceStep saved = sequenceStepRepository.save(
                 new SequenceStep(campaignId, stepOrder, channel, title, delayDays, subjectTemplate, bodyTemplate, isActive));
         logger.info("Added step {} to campaign ID {}", stepOrder, campaignId);

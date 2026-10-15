@@ -104,13 +104,17 @@ public class ExcelReaderService {
         }
 
         int totalSkipped = fileInternalDuplicates + dbDuplicates;
-        List<Leads> savedLeads = leadsRepository.saveAll(leadsToSave);
-        logger.info("Imported {} leads from file '{}' ({} skipped duplicates)", savedLeads.size(), filename, totalSkipped);
+        List<Leads> savedLeads = leadsRepository.saveAllAndFlush(leadsToSave);
+        logger.info("Synchronously saved and flushed {} new leads to database from file '{}' ({} skipped duplicates)",
+                savedLeads.size(), filename, totalSkipped);
 
-        // Auto-enroll newly saved leads into default active outreach campaign
+        // Auto-enroll all imported leads into default active outreach campaign synchronously
         Campaign defaultCampaign = emailCampaignService.getOrCreateDefaultCampaign();
-        if (!savedLeads.isEmpty()) {
-            List<EnrollLeadRequest> enrollRequests = savedLeads.stream().map(lead -> new EnrollLeadRequest(
+        List<Leads> allLeadsToEnroll = new ArrayList<>(savedLeads);
+        allLeadsToEnroll.addAll(existingMatches);
+
+        if (!allLeadsToEnroll.isEmpty()) {
+            List<EnrollLeadRequest> enrollRequests = allLeadsToEnroll.stream().map(lead -> new EnrollLeadRequest(
                     String.valueOf(lead.getId()),
                     lead.getEmail(),
                     lead.getNumber(),
@@ -125,10 +129,11 @@ public class ExcelReaderService {
             )).toList();
 
             emailCampaignService.bulkEnrollLeads(defaultCampaign.getId(), enrollRequests);
-            logger.info("Automatically enrolled {} imported leads into campaign ID {}", enrollRequests.size(), defaultCampaign.getId());
+            logger.info("Synchronously enrolled and flushed {} leads into campaign ID {}",
+                    enrollRequests.size(), defaultCampaign.getId());
         }
 
-        List<QueriedLead> importedDtoList = savedLeads.stream().map(l -> new QueriedLead(
+        List<QueriedLead> importedDtoList = allLeadsToEnroll.stream().map(l -> new QueriedLead(
                 l.getName() != null ? l.getName().trim().split("\\s+")[0] : "",
                 l.getName() != null && l.getName().trim().contains(" ") ? l.getName().trim().substring(l.getName().trim().indexOf(' ') + 1) : "",
                 l.getEmail(),

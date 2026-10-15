@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { SequenceStep, Lead, StepChannel, Campaign, LeadSequenceTracker } from '../types/lead';
+import { SequenceStep, Lead, StepChannel, Campaign, LeadSequenceTracker, CampaignQueueTarget } from '../types/lead';
 import { DEFAULT_SEQUENCE_STEPS, VARIABLE_TAGS } from '../data/mockLeads';
+import { EnrolledTargetsPopover } from './EnrolledTargetsPopover';
 import { 
   getActiveCampaign, 
   getCampaignSteps, 
@@ -11,25 +12,47 @@ import {
   runTestSequenceApi,
   importLeadsFile,
   getCampaignTrackers,
-  processAllCampaignTrackers
+  processAllCampaignTrackers,
+  updateCampaignStatus,
+  deleteCampaign
 } from '../utils/apiClient';
 import { 
   Mail, MessageSquare, Plus, Trash2, ArrowUp, ArrowDown, Sparkles, 
   Send, CheckCheck, Smartphone, Info, Play, CheckCircle2, ShieldAlert,
   ChevronRight, Users, Settings2, Code, Eye, RefreshCw, Server, Check, 
-  AlertCircle, FileSpreadsheet, Upload, Zap, Clock
+  AlertCircle, FileSpreadsheet, Upload, Zap, Clock, Pause, AlertTriangle
 } from 'lucide-react';
 
 interface OutreachEngineViewProps {
   enrolledLeads: Lead[];
   onRemoveEnrolledLead: (id: string) => void;
   onLeadsImported?: (newLeads: Lead[]) => void;
+  queueTargets?: CampaignQueueTarget[];
+  isQueueLoading?: boolean;
+  onClearQueue?: () => Promise<void>;
+  onDeleteQueueTarget?: (id: string | number) => Promise<void>;
+  onRefreshQueue?: () => Promise<any>;
+  onUploadFile?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  isUploadingFileProp?: boolean;
+  onNavigateToDiscovery?: () => void;
 }
+
+const MAX_SEQUENCE_STEPS = 8;
+const MAX_STEP_DELAY_DAYS = 90;
+const MIN_STEP_DELAY_DAYS = 0;
 
 export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   enrolledLeads,
   onRemoveEnrolledLead,
   onLeadsImported,
+  queueTargets,
+  isQueueLoading,
+  onClearQueue,
+  onDeleteQueueTarget,
+  onRefreshQueue,
+  onUploadFile,
+  isUploadingFileProp,
+  onNavigateToDiscovery,
 }) => {
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [steps, setSteps] = useState<SequenceStep[]>(DEFAULT_SEQUENCE_STEPS);
@@ -37,17 +60,19 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   const [activeLeadPreviewIndex, setActiveLeadPreviewIndex] = useState<number>(0);
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulationLog, setSimulationLog] = useState<string[]>([]);
-  const [showEnrolledDrawer, setShowEnrolledDrawer] = useState(false);
+  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
   const [serverTrackers, setServerTrackers] = useState<LeadSequenceTracker[]>([]);
   
   // Backend Integration States
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [backendStatus, setBackendStatus] = useState<'connected' | 'offline' | 'syncing'>('syncing');
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
   const [isEnrollingBackend, setIsEnrollingBackend] = useState<boolean>(false);
   const [sendActualEmail, setSendActualEmail] = useState<boolean>(false);
   const [isUploadingFile, setIsUploadingFile] = useState<boolean>(false);
   const [isProcessingAll, setIsProcessingAll] = useState<boolean>(false);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState<boolean>(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState<boolean>(false);
+  const [isDeletingCampaign, setIsDeletingCampaign] = useState<boolean>(false);
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -64,28 +89,6 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     try {
       const trackers = await getCampaignTrackers(campaignId);
       setServerTrackers(trackers);
-      if (trackers && trackers.length > 0) {
-        const freshLeads: Lead[] = trackers.map((t, idx) => ({
-          id: t.leadId ? `${t.leadId}-${t.id || idx}` : `tracker-${t.id || idx}-${idx}`,
-          name: t.fullName || t.firstName || 'Lead Target',
-          title: t.personTitle || 'Executive',
-          seniority: 'Executive' as const,
-          company: t.companyName || 'Target Company',
-          location: t.location || 'United States',
-          employees: '51-200',
-          revenue: parseFloat(t.revenue || '10') || 10,
-          industry: t.industry || 'Software & SaaS',
-          keywords: ['Enrolled', 'Outreach'],
-          email: t.email,
-          phone: t.phone || '',
-          linkedinUrl: '',
-          matchScore: 95,
-          verified: true,
-        }));
-        if (onLeadsImportedRef.current) {
-          onLeadsImportedRef.current(freshLeads);
-        }
-      }
       return trackers;
     } catch (err) {
       console.warn('Could not fetch campaign trackers from backend:', err);
@@ -101,7 +104,6 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
 
     async function loadCampaignAndSteps() {
       try {
-        setBackendStatus('syncing');
         const activeCamp = await getActiveCampaign();
         if (!isMounted) return;
         setCampaign(activeCamp);
@@ -110,27 +112,21 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
         if (!isMounted) return;
 
         if (serverSteps && serverSteps.length > 0) {
-          setSteps(serverSteps);
-          setActiveStepId(serverSteps[0].id);
+          const reindexed = reindexSteps(serverSteps);
+          setSteps(reindexed);
+          setActiveStepId(reindexed[0].id);
         } else {
           // If campaign steps are empty, sync the default steps to backend
-          await syncCampaignSteps(activeCamp.id, DEFAULT_SEQUENCE_STEPS);
-          setSteps(DEFAULT_SEQUENCE_STEPS);
-          setActiveStepId(DEFAULT_SEQUENCE_STEPS[0].id);
+          const reindexed = reindexSteps(DEFAULT_SEQUENCE_STEPS);
+          await syncCampaignSteps(activeCamp.id, reindexed);
+          setSteps(reindexed);
+          setActiveStepId(reindexed[0].id);
         }
 
         // Fetch already enrolled trackers for the active campaign
         await refreshEnrolledTrackers(activeCamp.id);
-
-        setBackendStatus('connected');
-        setSyncFeedback('Engine Connected');
-        setTimeout(() => setSyncFeedback(null), 3000);
       } catch (err) {
         console.warn('Backend unavailable or initializing, using local sequence defaults:', err);
-        if (isMounted) {
-          setBackendStatus('offline');
-          setSyncFeedback('Running in offline preview mode');
-        }
       }
     }
 
@@ -148,18 +144,36 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   const saveStepsToBackend = useCallback(async (updatedSteps: SequenceStep[]) => {
     if (!campaign) return;
 
+    // Frontend guard: Maximum 8 sequence steps
+    if (updatedSteps.length > MAX_SEQUENCE_STEPS) {
+      setSyncFeedback(`Cannot save: maximum ${MAX_SEQUENCE_STEPS} sequence steps allowed`);
+      setTimeout(() => setSyncFeedback(null), 3500);
+      return;
+    }
+
+    // Frontend guard: Step delay cannot exceed 90 days
+    const invalidDelayStep = updatedSteps.find(
+      (s) => s.delayDays < MIN_STEP_DELAY_DAYS || s.delayDays > MAX_STEP_DELAY_DAYS
+    );
+    if (invalidDelayStep) {
+      setSyncFeedback(
+        `Cannot save: step delay must be between ${MIN_STEP_DELAY_DAYS} and ${MAX_STEP_DELAY_DAYS} days (found ${invalidDelayStep.delayDays}d)`
+      );
+      setTimeout(() => setSyncFeedback(null), 3500);
+      return;
+    }
+
     try {
       setIsSyncing(true);
       const saved = await syncCampaignSteps(campaign.id, updatedSteps);
       setIsSyncing(false);
-      setBackendStatus('connected');
       setSyncFeedback('Sequence saved successfully');
       setTimeout(() => setSyncFeedback(null), 2500);
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Failed to sync steps with Spring Boot:', err);
       setIsSyncing(false);
-      setBackendStatus('offline');
-      setSyncFeedback('Sync failed — saved locally only');
+      const errMsg = err.response?.data?.message || err.message || 'Sync failed';
+      setSyncFeedback(`Sync failed: ${errMsg}`);
       setTimeout(() => setSyncFeedback(null), 3500);
     }
   }, [campaign]);
@@ -184,36 +198,65 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     isActive: true,
   };
 
-  // Currently selected lead for live tag preview rendering
-  const currentSampleLead: Lead = enrolledLeads[activeLeadPreviewIndex] || {
-    id: 'sample-0',
-    name: 'Alexandra Vance',
-    title: 'Chief Executive Officer',
-    seniority: 'C-Level',
-    company: 'ApexScale AI',
-    location: 'United States',
-    employees: '51-200',
-    revenue: 18.5,
-    industry: 'Software & SaaS',
-    keywords: ['AI', 'SaaS'],
-    email: 'a.vance@apexscale.ai',
-    phone: '+1 (415) 890-2341',
-    linkedinUrl: '',
-    matchScore: 98,
-    verified: true,
-  };
+  // Currently selected lead for live tag preview rendering (from real enrolled leads)
+  const currentSampleLead: Lead | null = enrolledLeads[activeLeadPreviewIndex] || enrolledLeads[0] || null;
 
   // Helper function to resolve dynamic template tags like {{first_name}}
-  const resolveTemplateTags = (text: string, lead: Lead): string => {
+  const resolveTemplateTags = (text: string, lead: Lead | null): string => {
     if (!text) return '';
+    if (!lead) return text;
     return text
-      .replace(/\{\{first_name\}\}/g, lead.name.split(' ')[0] || 'There')
-      .replace(/\{\{full_name\}\}/g, lead.name)
-      .replace(/\{\{person_title\}\}/g, lead.title)
-      .replace(/\{\{company_name\}\}/g, lead.company)
-      .replace(/\{\{location\}\}/g, lead.location)
-      .replace(/\{\{revenue\}\}/g, lead.revenue.toString())
-      .replace(/\{\{industry\}\}/g, lead.industry);
+      .replace(/\{\{first_name\}\}/g, lead.name ? lead.name.split(' ')[0] : 'There')
+      .replace(/\{\{full_name\}\}/g, lead.name || '')
+      .replace(/\{\{person_title\}\}/g, lead.title || '')
+      .replace(/\{\{company_name\}\}/g, lead.company || '')
+      .replace(/\{\{location\}\}/g, lead.location || '')
+      .replace(/\{\{revenue\}\}/g, lead.revenue !== undefined ? lead.revenue.toString() : '')
+      .replace(/\{\{industry\}\}/g, lead.industry || '');
+  };
+
+  // Helper to dynamically get SaaS industry standard action label using per-channel occurrence counter logic
+  const getContextualStepLabel = (step: SequenceStep, currentSteps: SequenceStep[]): string => {
+    let emailCount = 0;
+    let whatsappCount = 0;
+    for (const s of currentSteps) {
+      if (s.channel === 'email') {
+        emailCount++;
+        if (s.id === step.id) {
+          return emailCount === 1 ? 'Initial Email' : `Follow-up Email #${emailCount - 1}`;
+        }
+      } else {
+        whatsappCount++;
+        if (s.id === step.id) {
+          return whatsappCount === 1 ? 'Initial WhatsApp' : `Follow-up WhatsApp #${whatsappCount - 1}`;
+        }
+      }
+    }
+    return step.channel === 'email' ? 'Initial Email' : 'Initial WhatsApp';
+  };
+
+  const reindexSteps = (stepsList: SequenceStep[]): SequenceStep[] => {
+    let emailCount = 0;
+    let whatsappCount = 0;
+
+    return stepsList.map((step, idx) => {
+      const newStepNumber = idx + 1;
+      let actionLabel = '';
+
+      if (step.channel === 'email') {
+        emailCount++;
+        actionLabel = emailCount === 1 ? 'Initial Email' : `Follow-up Email #${emailCount - 1}`;
+      } else {
+        whatsappCount++;
+        actionLabel = whatsappCount === 1 ? 'Initial WhatsApp' : `Follow-up WhatsApp #${whatsappCount - 1}`;
+      }
+
+      return {
+        ...step,
+        stepNumber: newStepNumber,
+        title: actionLabel,
+      };
+    });
   };
 
   // Step reordering handlers
@@ -226,10 +269,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     updated[index] = updated[targetIndex];
     updated[targetIndex] = temp;
 
-    const renumbered = updated.map((step, idx) => ({
-      ...step,
-      stepNumber: idx + 1,
-    }));
+    const renumbered = reindexSteps(updated);
 
     setSteps(renumbered);
     triggerDebouncedSave(renumbered);
@@ -238,10 +278,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   // Delete step handler
   const deleteStep = (id: string) => {
     if (steps.length <= 1) return;
-    const updated = steps.filter((s) => s.id !== id).map((step, idx) => ({
-      ...step,
-      stepNumber: idx + 1,
-    }));
+    const updated = reindexSteps(steps.filter((s) => s.id !== id));
     setSteps(updated);
     if (activeStepId === id) {
       setActiveStepId(updated[0].id);
@@ -249,8 +286,14 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     triggerDebouncedSave(updated);
   };
 
-  // Add new step
+  // Add new step (capped at MAX_SEQUENCE_STEPS = 8)
   const addNewStep = (channel: StepChannel) => {
+    if (steps.length >= MAX_SEQUENCE_STEPS) {
+      setSyncFeedback(`Maximum sequence limit reached (${MAX_SEQUENCE_STEPS} steps max)`);
+      setTimeout(() => setSyncFeedback(null), 3500);
+      return;
+    }
+
     const nextStepNum = steps.length + 1;
     const newId = `step-${Date.now()}`;
     const newStep: SequenceStep = {
@@ -258,7 +301,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
       stepNumber: nextStepNum,
       channel,
       delayDays: 2,
-      title: channel === 'email' ? `Follow-up Email #${nextStepNum}` : `WhatsApp Touch #${nextStepNum}`,
+      title: channel === 'email' ? 'Email Step' : 'WhatsApp Step',
       subject: channel === 'email' ? 'Following up on my previous message' : undefined,
       body: channel === 'email' 
         ? `Hi {{first_name}},\n\nWanted to check if you had a moment to review my earlier note regarding {{company_name}}?\n\nBest regards,`
@@ -266,14 +309,20 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
       isActive: true,
     };
 
-    const newSteps = [...steps, newStep];
+    const newSteps = reindexSteps([...steps, newStep]);
     setSteps(newSteps);
     setActiveStepId(newId);
     triggerDebouncedSave(newSteps);
   };
 
-  // Step field updates
+  // Step field updates (delayDays clamped to 0..90)
   const updateActiveStep = (fields: Partial<SequenceStep>) => {
+    if (fields.delayDays !== undefined) {
+      const parsed = Number(fields.delayDays);
+      fields.delayDays = isNaN(parsed)
+        ? 0
+        : Math.min(MAX_STEP_DELAY_DAYS, Math.max(MIN_STEP_DELAY_DAYS, parsed));
+    }
     const newSteps = steps.map((s) => (s.id === activeStepId ? { ...s, ...fields } : s));
     setSteps(newSteps);
     triggerDebouncedSave(newSteps);
@@ -291,42 +340,178 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     }
   };
 
+  const campaignStatus = campaign?.status?.toUpperCase() || '';
+  const isCampaignRunning = campaignStatus === 'RUNNING' || campaignStatus === 'PROCESSING' || campaignStatus === 'ACTIVE';
+  const isCampaignPaused = campaignStatus === 'PAUSED';
+
   // ---------------------------------------------------------------------------
-  // 4. Trigger Immediate Campaign Dispatch (POST /api/campaigns/:id/process-all)
+  // Pause / Resume Campaign Status (PUT /api/campaign/status)
   // ---------------------------------------------------------------------------
-  const handleProcessCampaignImmediately = async () => {
+  const handleTogglePauseResume = async () => {
+    if (!campaign) return;
+    const isCurrentlyPaused = campaign.status?.toUpperCase() === 'PAUSED';
+    const nextStatus: 'RUNNING' | 'PAUSED' = isCurrentlyPaused ? 'RUNNING' : 'PAUSED';
+
+    try {
+      setIsUpdatingStatus(true);
+      console.log(`[OutreachEngineView] Updating campaign #${campaign.id} status to ${nextStatus}`);
+      const updated = await updateCampaignStatus(nextStatus, campaign.id);
+      setCampaign(updated);
+      setSyncFeedback(
+        nextStatus === 'PAUSED' 
+          ? 'Campaign Paused — Outgoing queue frozen' 
+          : 'Campaign Resumed — Outgoing queue active'
+      );
+      setTimeout(() => setSyncFeedback(null), 3500);
+    } catch (err: any) {
+      console.error('Failed to update campaign status:', err);
+      const errMsg = err.response?.data?.message || err.message || 'Status update failed';
+      setSyncFeedback(`Status update error: ${errMsg}`);
+      setTimeout(() => setSyncFeedback(null), 4000);
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Cascading Wipe / Delete Campaign (DELETE /api/campaign)
+  // ---------------------------------------------------------------------------
+  const handleConfirmDeleteCampaign = async () => {
     if (!campaign) return;
 
     try {
-      setIsProcessingAll(true);
-      setSyncFeedback('Dispatching campaign sequence immediately to all enrolled leads...');
+      setIsDeletingCampaign(true);
+      console.log(`[OutreachEngineView] Permanently deleting campaign ID: ${campaign.id}`);
+      await deleteCampaign(campaign.id);
 
-      const result = await processAllCampaignTrackers(campaign.id);
+      // Reset local view state
+      setCampaign(null);
+      setSteps(DEFAULT_SEQUENCE_STEPS);
+      setServerTrackers([]);
+      setIsDeleteDialogOpen(false);
+
+      // Cleanse enrolled targets & queues
+      if (onClearQueue) {
+        try {
+          await onClearQueue();
+        } catch (e) {
+          console.warn('Queue clear callback failed:', e);
+        }
+      } else if (onRefreshQueue) {
+        await onRefreshQueue();
+      }
+
+      setSyncFeedback('Campaign permanently deleted');
+      setTimeout(() => setSyncFeedback(null), 3000);
+
+      // Gracefully navigate back to Lead Discovery & Filtering view
+      if (onNavigateToDiscovery) {
+        onNavigateToDiscovery();
+      }
+    } catch (err: any) {
+      console.error('Failed to delete campaign:', err);
+      const errMsg = err.response?.data?.message || err.message || 'Deletion failed';
+      setSyncFeedback(`Delete error: ${errMsg}`);
+      setTimeout(() => setSyncFeedback(null), 4000);
+    } finally {
+      setIsDeletingCampaign(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // 4. Trigger Immediate Campaign Dispatch (POST /api/campaigns/:id/process-all)
+  // ---------------------------------------------------------------------------
+  const currentQueueData = (queueTargets && queueTargets.length > 0) ? queueTargets : enrolledLeads;
+  const activeQueueCount = currentQueueData.length;
+  const isLaunchDisabled = isProcessingAll || isCampaignRunning || isCampaignPaused || activeQueueCount === 0;
+
+  const handleProcessCampaignImmediately = useCallback(async () => {
+    // 3. Immediate console debugging tracking live active queue data
+    console.log("Process Sequence clicked!", currentQueueData);
+
+    let targetCampaignId = campaign?.id;
+    if (!targetCampaignId) {
+      console.log("[OutreachEngineView] Campaign ID missing from state, resolving active campaign from backend...");
+      try {
+        const activeCamp = await getActiveCampaign();
+        if (activeCamp) {
+          setCampaign(activeCamp);
+          targetCampaignId = activeCamp.id;
+        }
+      } catch (e) {
+        console.error("Could not fetch active campaign:", e);
+      }
+    }
+
+    if (!targetCampaignId) {
+      console.warn("Process Sequence aborted: no campaign ID available");
+      setSyncFeedback("Campaign not ready. Please reload or check connection.");
+      setTimeout(() => setSyncFeedback(null), 3500);
+      return;
+    }
+
+    if (isCampaignRunning) {
+      console.warn("Process Sequence aborted: campaign is already running");
+      setSyncFeedback('Campaign is already running in background.');
+      setTimeout(() => setSyncFeedback(null), 3500);
+      return;
+    }
+
+    if (isCampaignPaused) {
+      console.warn("Process Sequence aborted: campaign is paused");
+      setSyncFeedback('Campaign is paused. Resume campaign to dispatch messages.');
+      setTimeout(() => setSyncFeedback(null), 4000);
+      return;
+    }
+
+    if (currentQueueData.length === 0) {
+      console.warn("Process Sequence aborted: active queue has 0 leads");
+      setSyncFeedback('Queue is empty. Import or enroll leads first.');
+      setTimeout(() => setSyncFeedback(null), 3500);
+      return;
+    }
+
+    try {
+      setIsProcessingAll(true);
+      setSyncFeedback(`Dispatching sequence immediately to ${currentQueueData.length} enrolled lead(s)...`);
+      console.log(`[OutreachEngineView] Firing POST /api/campaigns/${targetCampaignId}/process-all for ${currentQueueData.length} leads...`);
+
+      // Dispatch sequence immediately via backend orchestration
+      const result = await processAllCampaignTrackers(targetCampaignId);
       setIsProcessingAll(false);
+
+      // PART 2.4: Synchronous update on click - immediately flip local campaign state without refresh
+      setCampaign(prev => prev ? { ...prev, status: 'RUNNING' } : null);
+
       setSyncFeedback(result.message || 'Sequence dispatched immediately!');
+      console.log('[OutreachEngineView] Process sequence response:', result);
 
       // Populate execution message into the console
       setSimulationLog((prev) => [
         ...prev,
-        `[${new Date().toLocaleTimeString()}] Immediate Outreach Dispatch executed for Campaign #${campaign.id}`,
-        `[${new Date().toLocaleTimeString()}] Dispatched outreach for ${result.processedTrackers ?? enrolledLeads.length} lead(s).`,
+        `[${new Date().toLocaleTimeString()}] Immediate Outreach Dispatch executed for Campaign #${targetCampaignId}`,
+        `[${new Date().toLocaleTimeString()}] Dispatched outreach for ${result.processedTrackers ?? currentQueueData.length} lead(s).`,
         `[SUCCESS] Emails & touchpoints dispatched without waiting for scheduled delay.`
       ]);
 
       // Re-fetch trackers to display updated progress/status
       setTimeout(() => {
-        refreshEnrolledTrackers(campaign.id);
-      }, 1200);
+        refreshEnrolledTrackers(targetCampaignId);
+        if (onRefreshQueue) onRefreshQueue();
+      }, 1000);
 
       setTimeout(() => setSyncFeedback(null), 5000);
     } catch (err: any) {
       console.error('Immediate execution failed:', err);
       setIsProcessingAll(false);
       const errMsg = err.response?.data?.message || err.message || 'Execution error';
+      if (typeof errMsg === 'string' && (errMsg.includes('already running') || errMsg.includes('already active'))) {
+        setCampaign(prev => prev ? { ...prev, status: 'RUNNING' } : null);
+      }
       setSyncFeedback(`Dispatch error: ${errMsg}`);
       setTimeout(() => setSyncFeedback(null), 4000);
     }
-  };
+  }, [campaign, isCampaignRunning, isCampaignPaused, queueTargets, enrolledLeads, currentQueueData, refreshEnrolledTrackers, onRefreshQueue]);
 
   // ---------------------------------------------------------------------------
   // 5. Trigger Backend Sequence Test Run / Live Preview Simulation
@@ -335,16 +520,22 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     setIsSimulating(true);
     setSimulationLog([]);
 
+    if (!currentSampleLead) {
+      setIsSimulating(false);
+      setSyncFeedback('No target lead enrolled to run simulation.');
+      return;
+    }
+
     const leadName = currentSampleLead.name;
     const company = currentSampleLead.company;
 
-    if (campaign && backendStatus === 'connected') {
+    if (campaign) {
       try {
         const response = await runTestSequenceApi(
           campaign.id,
           currentSampleLead,
           steps,
-          sendActualEmail
+          true
         );
 
         if (response && response.logs && response.logs.length > 0) {
@@ -409,7 +600,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   };
 
   // ---------------------------------------------------------------------------
-  // 7. Excel & CSV File Lead Upload Handler (Auto Re-fetches Trackers)
+  // 7. Excel & CSV File Lead Upload Handler (Backend-First Single Source of Truth)
   // ---------------------------------------------------------------------------
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -417,51 +608,31 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
 
     try {
       setIsUploadingFile(true);
-      setSyncFeedback(`Parsing & importing ${file.name}...`);
+      setSyncFeedback(`Uploading & saving ${file.name} to database...`);
+      console.log(`[OutreachEngineView] Uploading file ${file.name} to backend...`);
 
+      // 1. Immediately fire network API request to Spring Boot backend
+      // Do not write leads directly to local state before the API request resolves
       const response = await importLeadsFile(file);
+      console.log('[OutreachEngineView] File saved to database successfully:', response);
 
-      // Ensure importLeadsFile generates guaranteed unique IDs for newly returned leads before merging them into enrolledLeads state
-      if (response.importedLeads && response.importedLeads.length > 0 && onLeadsImportedRef.current) {
-        const uniqueTimestamp = Date.now();
-        const mappedLeads: Lead[] = response.importedLeads.map((ql, idx) => {
-          const uniqueSuffix = typeof crypto !== 'undefined' && crypto.randomUUID
-            ? crypto.randomUUID()
-            : `${uniqueTimestamp}-${idx}-${Math.random().toString(36).slice(2, 9)}`;
-          const uniqueId = `imported-${uniqueSuffix}`;
-          const fullName = [ql.firstName, ql.lastName].filter(Boolean).join(' ') || 'Imported Lead';
-          return {
-            id: uniqueId,
-            name: fullName,
-            title: ql.title || 'Lead Target',
-            seniority: 'Executive' as const,
-            company: ql.organization || 'Imported Company',
-            location: 'United States',
-            employees: '51-200',
-            revenue: 10,
-            industry: 'General',
-            keywords: ['Imported', 'Outreach'],
-            email: ql.email || '',
-            phone: ql.phoneNumber || '',
-            linkedinUrl: '',
-            matchScore: 90,
-            verified: true,
-          };
-        });
-        onLeadsImportedRef.current(mappedLeads);
+      // 2. Wait for backend response, then trigger a re-fetch of queue from the database
+      if (onRefreshQueue) {
+        console.log('[OutreachEngineView] Triggering database queue re-fetch...');
+        await onRefreshQueue();
       }
 
-      // Immediately re-fetch campaign trackers from backend so the enrolled targets drawer updates without page refresh
+      // 3. Sync campaign sequence trackers from backend
       const activeCampId = campaign?.id || response.enrolledCampaignId;
       if (activeCampId) {
         await refreshEnrolledTrackers(activeCampId);
       }
 
-      setSyncFeedback(response.message);
-      setShowEnrolledDrawer(true);
-      setTimeout(() => setSyncFeedback(null), 5000);
+      setSyncFeedback(response.message || 'Leads imported and saved to database successfully');
+      setIsPopoverOpen(true);
+      setTimeout(() => setSyncFeedback(null), 4000);
     } catch (err: any) {
-      console.error('File import error:', err);
+      console.error('[OutreachEngineView] File import error:', err);
       const errMsg = err.response?.data?.message || err.message || 'Failed to import file';
       setSyncFeedback(`Import error: ${errMsg}`);
       setTimeout(() => setSyncFeedback(null), 5000);
@@ -477,16 +648,34 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     <div className="w-full max-w-[1640px] mx-auto px-4 md:px-8 py-6 space-y-6">
       
       {/* Page Header / Sequence Metrics Bar */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between border-b border-[#353535] pb-6 gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-[#353535] pb-6 gap-4">
         <div>
-          <div className="flex items-center gap-3 mb-1">
+          <div className="flex items-center gap-3 mb-1 min-h-[22px]">
             <span className="text-xs font-mono text-[#37cd84] uppercase tracking-widest block">
               Campaign Workflow
             </span>
             {campaign && (
-              <span className="bg-[#212121] text-[#b9b9b9] text-[10px] font-mono px-2 py-0.5 rounded border border-[#353535]">
-                Campaign #{campaign.id}: {campaign.name}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="bg-[#212121] text-[#b9b9b9] text-[10px] font-mono px-2 py-0.5 rounded border border-[#353535]">
+                  Campaign #{campaign.id}: {campaign.name}
+                </span>
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded border flex items-center gap-1.5 ${
+                  isCampaignPaused 
+                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' 
+                    : isCampaignRunning
+                    ? 'bg-[#37cd84]/10 border-[#37cd84]/30 text-[#37cd84]'
+                    : 'bg-zinc-500/10 border-zinc-500/30 text-zinc-400'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    isCampaignPaused 
+                      ? 'bg-amber-400 animate-pulse' 
+                      : isCampaignRunning 
+                      ? 'bg-[#37cd84] animate-pulse' 
+                      : 'bg-zinc-400'
+                  }`} />
+                  {isCampaignPaused ? 'PAUSED' : isCampaignRunning ? 'RUNNING' : (campaign.status?.toUpperCase() || 'READY')}
+                </span>
+              </div>
             )}
           </div>
           <h1 className="text-3xl md:text-4xl font-normal tracking-tight text-white font-sans">
@@ -499,24 +688,6 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
 
         {/* Sequence Metrics Quick Bar & Actions */}
         <div className="flex flex-wrap items-center gap-3">
-          
-          {/* Connection Status Indicator */}
-          <div className="flex items-center gap-2 bg-[#212121] border border-[#353535] px-3 py-1.5 rounded-[4px] text-xs font-mono">
-            <Server className={`w-3.5 h-3.5 ${
-              backendStatus === 'connected' ? 'text-[#37cd84]' : backendStatus === 'syncing' ? 'text-amber-400 animate-spin' : 'text-[#f36458]'
-            }`} />
-            <span className="text-white">
-              {backendStatus === 'connected' ? 'Engine Ready' : backendStatus === 'syncing' ? 'Syncing...' : 'Offline Mode'}
-            </span>
-            {isSyncing && <RefreshCw className="w-3 h-3 text-[#55beff] animate-spin" />}
-          </div>
-
-          {/* Sync status toast pill */}
-          {syncFeedback && (
-            <span className="text-[11px] font-mono text-[#37cd84] bg-[#0b0b0b] border border-[#37cd84]/40 px-2.5 py-1 rounded">
-              {syncFeedback}
-            </span>
-          )}
 
           {/* Excel / CSV Lead Import Action */}
           <label className="flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#37cd84] text-white hover:text-[#37cd84] px-3.5 py-2 rounded-[4px] text-xs font-mono cursor-pointer transition-all">
@@ -532,60 +703,184 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
             />
           </label>
 
-          {/* Actual SMTP Send Toggle */}
-          <label className="flex items-center gap-1.5 bg-[#212121] border border-[#353535] px-2.5 py-1.5 rounded text-[11px] font-mono text-[#b9b9b9] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={sendActualEmail}
-              onChange={(e) => setSendActualEmail(e.target.checked)}
-              className="accent-[#37cd84] cursor-pointer"
-            />
-            <span>Real SMTP</span>
-          </label>
+          {/* Enrolled Targets Queue Mini-Dashboard Popover Window */}
+          <div className="relative">
+            <button
+              onClick={() => {
+                const nextState = !isPopoverOpen;
+                setIsPopoverOpen(nextState);
+                if (nextState && onRefreshQueue) {
+                  onRefreshQueue();
+                }
+              }}
+              className="flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#b9b9b9] px-3.5 py-2 rounded-[4px] text-xs font-mono text-white cursor-pointer transition-all"
+            >
+              <Users className="w-4 h-4 text-[#f36458]" />
+              <span>Enrolled Targets: <strong className="text-[#37cd84]">{queueTargets ? queueTargets.length : enrolledLeads.length} Leads</strong></span>
+            </button>
 
-          {/* Enrolled Targets Drawer Trigger */}
+            {onClearQueue && onDeleteQueueTarget && (
+              <EnrolledTargetsPopover
+                isOpen={isPopoverOpen}
+                onClose={() => setIsPopoverOpen(false)}
+                queueTargets={queueTargets || []}
+                isLoading={isQueueLoading || false}
+                onClearQueue={onClearQueue}
+                onDeleteTarget={onDeleteQueueTarget}
+                onUploadFile={onUploadFile || handleFileUpload}
+                isUploadingFile={isUploadingFile || isUploadingFileProp}
+                onRefresh={onRefreshQueue}
+                align="left"
+              />
+            )}
+          </div>
+
+          {/* Pause / Resume Campaign Button / Toggle */}
           <button
-            onClick={() => setShowEnrolledDrawer(!showEnrolledDrawer)}
-            className="flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#b9b9b9] px-3.5 py-2 rounded-[4px] text-xs font-mono text-white cursor-pointer transition-all"
+            onClick={handleTogglePauseResume}
+            disabled={isUpdatingStatus || !campaign}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-[4px] text-xs font-mono transition-all cursor-pointer disabled:opacity-50 ${
+              isCampaignPaused
+                ? 'bg-amber-500/15 border border-amber-500/60 text-amber-300 hover:bg-amber-500/25 shadow-sm shadow-amber-500/20'
+                : 'bg-[#212121] border border-[#353535] hover:border-amber-500/40 text-white hover:text-amber-400'
+            }`}
+            title={isCampaignPaused ? 'Resume campaign outreach dispatching' : 'Pause campaign outreach dispatching'}
           >
-            <Users className="w-4 h-4 text-[#f36458]" />
-            <span>Enrolled Targets: <strong className="text-[#37cd84]">{enrolledLeads.length} Leads</strong></span>
+            {isUpdatingStatus ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+            ) : isCampaignPaused ? (
+              <Play className="w-3.5 h-3.5 text-amber-400 fill-current" />
+            ) : (
+              <Pause className="w-3.5 h-3.5 text-amber-400" />
+            )}
+            <span>{isUpdatingStatus ? 'Updating...' : isCampaignPaused ? 'Resume Campaign' : 'Pause Campaign'}</span>
+          </button>
+
+          {/* Delete Campaign Button */}
+          <button
+            onClick={() => setIsDeleteDialogOpen(true)}
+            disabled={!campaign || isDeletingCampaign}
+            className="flex items-center gap-2 bg-red-950/20 border border-red-500/30 hover:border-red-500/60 text-red-400 hover:text-red-300 hover:bg-red-950/40 px-3.5 py-2 rounded-[4px] text-xs font-mono transition-all cursor-pointer disabled:opacity-50"
+            title="Permanently delete campaign and wipe sequence data"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-red-400" />
+            <span>Delete Campaign</span>
           </button>
 
           {/* Run Campaign / Process Sequence Button (Dispatches immediately without waiting for cron) */}
           <button
             onClick={handleProcessCampaignImmediately}
-            disabled={isProcessingAll || enrolledLeads.length === 0}
-            className="flex items-center gap-2 bg-[#f36458] text-white hover:bg-[#f36458]/90 px-4 py-2 rounded-full text-xs font-bold transition-all shadow-lg shadow-[#f36458]/20 cursor-pointer disabled:opacity-50"
-            title="Immediately sends campaign emails to all enrolled leads without waiting for schedule"
+            disabled={isLaunchDisabled}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all shadow-lg cursor-pointer disabled:cursor-not-allowed ${
+              isCampaignRunning
+                ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 cursor-not-allowed shadow-none'
+                : isLaunchDisabled 
+                ? 'bg-[#353535] text-[#797979] cursor-not-allowed shadow-none'
+                : 'bg-[#f36458] text-white hover:bg-[#f36458]/90 shadow-[#f36458]/20'
+            }`}
+            title={
+              isCampaignRunning
+                ? 'Campaign is actively running tasks in the background.'
+                : isCampaignPaused 
+                ? 'Campaign is paused. Resume to send.' 
+                : activeQueueCount === 0 
+                ? 'No targets in queue. Import or enroll leads first.' 
+                : 'Immediately sends campaign emails to all enrolled leads without waiting for schedule'
+            }
           >
-            <Send className={`w-3.5 h-3.5 ${isProcessingAll ? 'animate-spin' : ''}`} />
-            <span>{isProcessingAll ? 'Dispatching...' : 'Process Sequence (Send Now)'}</span>
-          </button>
-
-          {/* Interactive Simulation / Test Run Console Button */}
-          <button
-            onClick={runSequenceSimulation}
-            disabled={isSimulating}
-            className="flex items-center gap-2 bg-[#37cd84] text-[#0b0b0b] hover:bg-[#37cd84]/90 px-4 py-2 rounded-full text-xs font-bold transition-all shadow-lg shadow-[#37cd84]/10 cursor-pointer disabled:opacity-50"
-          >
-            <Play className={`w-3.5 h-3.5 ${isSimulating ? 'animate-spin' : ''}`} />
-            <span>{isSimulating ? 'Simulating...' : 'Run Test Sequence'}</span>
+            {isProcessingAll ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : isCampaignRunning ? (
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+            ) : (
+              <Send className="w-3.5 h-3.5" />
+            )}
+            <span>
+              {isProcessingAll 
+                ? 'Dispatching...' 
+                : isCampaignRunning 
+                ? 'Campaign Active & Processing' 
+                : 'Process Sequence (Send Now)'}
+            </span>
           </button>
         </div>
       </div>
 
+      {/* Visual Badge/Banner: Campaign Active & Running in Background */}
+      {isCampaignRunning && (
+        <div className="bg-emerald-950/20 border border-emerald-500/30 text-emerald-200 rounded-xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-in fade-in duration-200 shadow-md shadow-emerald-950/10">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0 border border-emerald-500/30">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              </span>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-emerald-300 font-sans tracking-tight flex items-center gap-2">
+                <span>Sequence Engine Active & Processing</span>
+                <span className="bg-emerald-500/20 text-emerald-300 text-[9px] font-mono px-1.5 py-0.5 rounded border border-emerald-500/30 uppercase">
+                  Active
+                </span>
+              </div>
+              <div className="text-[11px] text-emerald-200/70 font-mono mt-0.5">
+                Workers are processing email sequences and queue trackers in the background. Duplicate launches are locked.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Visual Badge/Banner: Campaign Paused — Outgoing queue frozen */}
+      {isCampaignPaused && (
+        <div className="bg-amber-950/30 border border-amber-500/40 text-amber-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in duration-200 shadow-lg shadow-amber-950/20">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-amber-500/20 flex items-center justify-center shrink-0 border border-amber-500/30">
+              <Pause className="w-4 h-4 text-amber-400" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-amber-300 font-sans tracking-tight flex items-center gap-2">
+                <span>Campaign Paused — Outgoing queue frozen</span>
+                <span className="bg-amber-500/20 text-amber-300 text-[10px] font-mono px-2 py-0.5 rounded border border-amber-500/30 uppercase">
+                  Frozen
+                </span>
+              </div>
+              <div className="text-xs text-amber-200/70 font-mono mt-0.5">
+                All outgoing emails, WhatsApp touchpoints, and scheduled cron executions are suspended.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={handleTogglePauseResume}
+            disabled={isUpdatingStatus}
+            className="flex items-center gap-1.5 bg-amber-500 text-black hover:bg-amber-400 px-4 py-2 rounded text-xs font-bold font-mono transition-all shrink-0 cursor-pointer disabled:opacity-50 shadow-md shadow-amber-500/20"
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            <span>Resume Outgoing Queue</span>
+          </button>
+        </div>
+      )}
+
       {/* Target Lead Selector for Live Preview */}
-      <div className="bg-[#212121] border border-[#353535] rounded-xl p-3 px-5 flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-[#212121] border border-[#353535] rounded-xl p-3 px-5 flex flex-wrap items-center justify-between gap-4 min-h-[50px]">
         <div className="flex items-center gap-3">
           <span className="text-xs font-mono text-[#797979]">LIVE CONTEXT TARGET:</span>
-          <div className="flex items-center gap-2 bg-[#0b0b0b] border border-[#353535] px-3 py-1 rounded-full text-xs text-white">
-            <div className="w-5 h-5 rounded-full bg-[#0052ef] text-white flex items-center justify-center font-bold text-[10px] shrink-0 font-mono">
-              {(currentSampleLead.name || 'L').charAt(0).toUpperCase()}
+          {currentSampleLead ? (
+            <div className="flex items-center gap-2 bg-[#0b0b0b] border border-[#353535] px-3 py-1 rounded-full text-xs text-white">
+              <div className="w-5 h-5 rounded-full bg-[#0052ef] text-white flex items-center justify-center font-bold text-[10px] shrink-0 font-mono">
+                {(currentSampleLead.name || 'L').charAt(0).toUpperCase()}
+              </div>
+              <span className="font-semibold">{currentSampleLead.name}</span>
+              <span className="text-[#797979]">({currentSampleLead.company})</span>
             </div>
-            <span className="font-semibold">{currentSampleLead.name}</span>
-            <span className="text-[#797979]">({currentSampleLead.company})</span>
-          </div>
+          ) : (
+            <span className="text-xs text-[#797979] italic font-mono">
+              No target enrolled (enroll leads from Discovery to preview dynamic variables)
+            </span>
+          )}
         </div>
 
         {enrolledLeads.length > 1 && (
@@ -642,7 +937,9 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                 <span>Multi-Channel Sequence Timeline</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-[11px] font-mono text-[#797979]">{steps.length} PHASES</span>
+                <span className="text-[11px] font-mono text-[#797979]">
+                  {steps.length} / {MAX_SEQUENCE_STEPS} PHASES
+                </span>
                 <button
                   onClick={() => saveStepsToBackend(steps)}
                   disabled={isSyncing}
@@ -660,113 +957,141 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
               {/* Connecting Timeline Line */}
               <div className="absolute left-6 top-6 bottom-6 w-0.5 bg-[#353535] z-0" />
 
-              {steps.map((step, index) => {
-                const isSelected = step.id === activeStepId;
-                return (
-                  <div
-                    key={step.id}
-                    onClick={() => setActiveStepId(step.id)}
-                    className={`relative z-10 p-4 rounded-xl border transition-all duration-200 cursor-pointer ${
-                      isSelected
-                        ? 'bg-[#0b0b0b] border-[#f36458] shadow-lg shadow-[#f36458]/10 ring-1 ring-[#f36458]/50'
-                        : 'bg-[#0b0b0b]/60 border-[#353535] hover:border-[#b9b9b9] hover:bg-[#0b0b0b]'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      
-                      {/* Step Badge Icon */}
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`w-10 h-10 rounded-full flex items-center justify-center font-mono font-bold text-xs shadow-md ${
-                            step.channel === 'email'
-                              ? 'bg-[#0052ef] text-white'
-                              : 'bg-[#37cd84] text-[#0b0b0b]'
-                          }`}
-                        >
-                          {step.channel === 'email' ? (
-                            <Mail className="w-5 h-5" />
-                          ) : (
-                            <MessageSquare className="w-5 h-5" />
-                          )}
-                        </div>
+              {(() => {
+                let emailCount = 0;
+                let whatsappCount = 0;
 
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-mono font-bold text-[#f36458]">
-                              STEP {step.stepNumber}
-                            </span>
-                            <span className="text-[10px] font-mono text-[#797979] uppercase bg-[#212121] px-2 py-0.5 rounded border border-[#353535]">
-                              {step.channel}
-                            </span>
-                            <span className="text-[10px] font-mono text-[#b9b9b9]">
-                              Delay: {step.delayDays} day{step.delayDays > 1 ? 's' : ''}
-                            </span>
+                return steps.map((step, index) => {
+                  const isSelected = step.id === activeStepId;
+
+                  let dynamicActionLabel = '';
+                  if (step.channel === 'email') {
+                    emailCount++;
+                    dynamicActionLabel = emailCount === 1 ? 'Initial Email' : `Follow-up Email #${emailCount - 1}`;
+                  } else {
+                    whatsappCount++;
+                    dynamicActionLabel = whatsappCount === 1 ? 'Initial WhatsApp' : `Follow-up WhatsApp #${whatsappCount - 1}`;
+                  }
+
+                  return (
+                    <div
+                      key={step.id}
+                      onClick={() => setActiveStepId(step.id)}
+                      className={`relative z-10 p-4 rounded-xl border transition-all duration-200 cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#0b0b0b] border-[#f36458] shadow-lg shadow-[#f36458]/10 ring-1 ring-[#f36458]/50'
+                          : 'bg-[#0b0b0b]/60 border-[#353535] hover:border-[#b9b9b9] hover:bg-[#0b0b0b]'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        
+                        {/* Step Badge Icon */}
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`w-10 h-10 rounded-full flex items-center justify-center font-mono font-bold text-xs shadow-md ${
+                              step.channel === 'email'
+                                ? 'bg-[#0052ef] text-white'
+                                : 'bg-[#37cd84] text-[#0b0b0b]'
+                            }`}
+                          >
+                            {step.channel === 'email' ? (
+                              <Mail className="w-5 h-5" />
+                            ) : (
+                              <MessageSquare className="w-5 h-5" />
+                            )}
                           </div>
 
-                          <h4 className="text-sm font-semibold text-white mt-0.5">{step.title}</h4>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-mono font-bold text-[#f36458]">
+                                STEP {step.stepNumber}
+                              </span>
+                              <span className="text-[10px] font-mono text-[#797979] uppercase bg-[#212121] px-2 py-0.5 rounded border border-[#353535]">
+                                {step.channel}
+                              </span>
+                              <span className="text-[10px] font-mono text-[#b9b9b9]">
+                                Delay: {step.delayDays} day{step.delayDays > 1 ? 's' : ''}
+                              </span>
+                            </div>
+
+                            <h4 className="text-sm font-semibold text-white mt-0.5">
+                              {dynamicActionLabel}
+                            </h4>
+                          </div>
                         </div>
+
+                        {/* Interaction Controls: Move Up, Move Down, Delete */}
+                        <div className="flex items-center gap-1 bg-[#212121] p-1 rounded border border-[#353535]" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => moveStep(index, 'up')}
+                            disabled={index === 0}
+                            title="Move Step Up"
+                            className="p-1 text-[#797979] hover:text-white disabled:opacity-30 cursor-pointer"
+                          >
+                            <ArrowUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => moveStep(index, 'down')}
+                            disabled={index === steps.length - 1}
+                            title="Move Step Down"
+                            className="p-1 text-[#797979] hover:text-white disabled:opacity-30 cursor-pointer"
+                          >
+                            <ArrowDown className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => deleteStep(step.id)}
+                            title="Delete Step"
+                            className="p-1 text-[#797979] hover:text-[#dd0000] cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
                       </div>
 
-                      {/* Interaction Controls: Move Up, Move Down, Delete */}
-                      <div className="flex items-center gap-1 bg-[#212121] p-1 rounded border border-[#353535]" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => moveStep(index, 'up')}
-                          disabled={index === 0}
-                          title="Move Step Up"
-                          className="p-1 text-[#797979] hover:text-white disabled:opacity-30 cursor-pointer"
-                        >
-                          <ArrowUp className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => moveStep(index, 'down')}
-                          disabled={index === steps.length - 1}
-                          title="Move Step Down"
-                          className="p-1 text-[#797979] hover:text-white disabled:opacity-30 cursor-pointer"
-                        >
-                          <ArrowDown className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => deleteStep(step.id)}
-                          title="Delete Step"
-                          className="p-1 text-[#797979] hover:text-[#dd0000] cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                      {/* Preview snippet */}
+                      <div className="mt-3 pt-2 border-t border-[#353535] text-xs text-[#b9b9b9] font-sans truncate">
+                        {step.channel === 'email' && step.subject && (
+                          <span className="font-mono text-[11px] text-[#55beff] block truncate">
+                            Subject: {step.subject}
+                          </span>
+                        )}
+                        <p className="truncate text-[#797979] mt-0.5">{step.body}</p>
                       </div>
 
                     </div>
-
-                    {/* Preview snippet */}
-                    <div className="mt-3 pt-2 border-t border-[#353535] text-xs text-[#b9b9b9] font-sans truncate">
-                      {step.channel === 'email' && step.subject && (
-                        <span className="font-mono text-[11px] text-[#55beff] block truncate">
-                          Subject: {step.subject}
-                        </span>
-                      )}
-                      <p className="truncate text-[#797979] mt-0.5">{step.body}</p>
-                    </div>
-
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
 
-            {/* Add New Step Buttons */}
-            <div className="pt-2 border-t border-[#353535] grid grid-cols-2 gap-3">
-              <button
-                onClick={() => addNewStep('email')}
-                className="flex items-center justify-center gap-2 bg-[#0b0b0b] hover:bg-[#0052ef]/20 border border-[#0052ef]/50 text-[#55beff] px-3 py-2 rounded-[4px] text-xs font-mono transition-all cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>+ Email Step</span>
-              </button>
-              <button
-                onClick={() => addNewStep('whatsapp')}
-                className="flex items-center justify-center gap-2 bg-[#0b0b0b] hover:bg-[#37cd84]/20 border border-[#37cd84]/50 text-[#37cd84] px-3 py-2 rounded-[4px] text-xs font-mono transition-all cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>+ WhatsApp Step</span>
-              </button>
+            {/* Add New Step Buttons (Capped at MAX_SEQUENCE_STEPS = 8) */}
+            <div className="pt-2 border-t border-[#353535] space-y-2">
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => addNewStep('email')}
+                  disabled={steps.length >= MAX_SEQUENCE_STEPS}
+                  className="flex items-center justify-center gap-2 bg-[#0b0b0b] hover:bg-[#0052ef]/20 border border-[#0052ef]/50 text-[#55beff] px-3 py-2 rounded-[4px] text-xs font-mono transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#0b0b0b]"
+                  title={steps.length >= MAX_SEQUENCE_STEPS ? 'Maximum 8 steps allowed per sequence' : 'Add new email sequence step'}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Email Step</span>
+                </button>
+                <button
+                  onClick={() => addNewStep('whatsapp')}
+                  disabled={steps.length >= MAX_SEQUENCE_STEPS}
+                  className="flex items-center justify-center gap-2 bg-[#0b0b0b] hover:bg-[#37cd84]/20 border border-[#37cd84]/50 text-[#37cd84] px-3 py-2 rounded-[4px] text-xs font-mono transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#0b0b0b]"
+                  title={steps.length >= MAX_SEQUENCE_STEPS ? 'Maximum 8 steps allowed per sequence' : 'Add new WhatsApp sequence step'}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ WhatsApp Step</span>
+                </button>
+              </div>
+              {steps.length >= MAX_SEQUENCE_STEPS && (
+                <div className="text-[10px] font-mono text-amber-400 text-center py-1 px-2 bg-amber-500/10 border border-amber-500/20 rounded">
+                  Maximum {MAX_SEQUENCE_STEPS} sequence steps reached
+                </div>
+              )}
             </div>
 
           </div>
@@ -786,23 +1111,30 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                 </span>
                 <div>
                   <h3 className="text-base font-semibold text-white">
-                    Step {activeStep.stepNumber}: {activeStep.title}
+                    Step {activeStep.stepNumber}: {getContextualStepLabel(activeStep, steps)}
                   </h3>
                 </div>
               </div>
 
-              {/* Delay Selector */}
+              {/* Delay Selector (Capped at MAX_STEP_DELAY_DAYS = 90) */}
               <div className="flex items-center gap-2 text-xs text-[#b9b9b9] font-mono">
                 <span>Delay:</span>
                 <input
                   type="number"
-                  min={0}
-                  max={30}
+                  min={MIN_STEP_DELAY_DAYS}
+                  max={MAX_STEP_DELAY_DAYS}
                   value={activeStep.delayDays}
-                  onChange={(e) => updateActiveStep({ delayDays: Number(e.target.value) })}
-                  className="w-16 bg-[#0b0b0b] text-white border border-[#353535] rounded px-2 py-1 text-center font-mono focus:outline-none"
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    const clamped = isNaN(val)
+                      ? 0
+                      : Math.min(MAX_STEP_DELAY_DAYS, Math.max(MIN_STEP_DELAY_DAYS, val));
+                    updateActiveStep({ delayDays: clamped });
+                  }}
+                  className="w-16 bg-[#0b0b0b] text-white border border-[#353535] rounded px-2 py-1 text-center font-mono focus:outline-none focus:border-[#f36458]"
                 />
                 <span>day(s)</span>
+                <span className="text-[10px] text-[#797979] font-mono">(max {MAX_STEP_DELAY_DAYS}d)</span>
               </div>
             </div>
 
@@ -871,11 +1203,11 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                 {/* Email Live Preview Box */}
                 <div className="bg-[#0b0b0b] border border-[#353535] rounded-lg p-4 space-y-2">
                   <span className="text-[10px] font-mono text-[#37cd84] uppercase tracking-widest block">
-                    // LIVE EMAIL RENDER PREVIEW ({currentSampleLead.name})
+                    // LIVE EMAIL RENDER PREVIEW {currentSampleLead ? `(${currentSampleLead.name})` : '(NO TARGET ENROLLED)'}
                   </span>
                   <div className="bg-[#212121] p-3 rounded text-xs text-white border border-[#353535] space-y-1">
                     <p className="font-semibold text-[#55beff]">
-                      To: {currentSampleLead.email}
+                      To: {currentSampleLead ? currentSampleLead.email : 'No enrolled lead'}
                     </p>
                     <p className="font-medium text-white border-b border-[#353535] pb-2">
                       Subject: {resolveTemplateTags(activeStep.subject || '', currentSampleLead)}
@@ -933,11 +1265,15 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                     {/* WhatsApp App Header */}
                     <div className="bg-[#075e54] text-white p-2.5 rounded-t-xl flex items-center gap-2 shadow-md">
                       <div className="w-7 h-7 rounded-full bg-emerald-800 text-white flex items-center justify-center font-bold text-xs shrink-0 border border-white/30 font-mono">
-                        {(currentSampleLead.name || 'L').charAt(0).toUpperCase()}
+                        {(currentSampleLead?.name || 'T').charAt(0).toUpperCase()}
                       </div>
                       <div className="overflow-hidden">
-                        <h5 className="text-xs font-bold truncate leading-tight">{currentSampleLead.name}</h5>
-                        <p className="text-[9px] text-emerald-200 truncate">{currentSampleLead.company}</p>
+                        <h5 className="text-xs font-bold truncate leading-tight">
+                          {currentSampleLead ? currentSampleLead.name : 'Target Contact'}
+                        </h5>
+                        <p className="text-[9px] text-emerald-200 truncate">
+                          {currentSampleLead ? currentSampleLead.company : 'Company'}
+                        </p>
                       </div>
                     </div>
 
@@ -975,122 +1311,64 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
 
       </div>
 
-      {/* ENROLLED TARGETS DRAWER / MODAL */}
-      {showEnrolledDrawer && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex justify-end">
-          <div className="bg-[#212121] border-l border-[#353535] w-full max-w-md h-full p-6 space-y-6 overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-[#353535] pb-4">
-              <div className="flex items-center gap-2 text-white font-bold text-base">
-                <Users className="w-5 h-5 text-[#37cd84]" />
-                <span>Enrolled Sequence Queue ({enrolledLeads.length})</span>
+
+
+      {/* Delete Campaign Confirmation Modal */}
+      {isDeleteDialogOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-[#141414] border border-red-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5 text-white">
+            <div className="flex items-center gap-3 text-red-400">
+              <div className="w-10 h-10 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
               </div>
+              <div>
+                <h3 className="text-lg font-bold font-sans text-white">Delete Campaign</h3>
+                {campaign && <p className="text-xs font-mono text-[#797979]">Campaign #{campaign.id}: {campaign.name}</p>}
+              </div>
+            </div>
+            
+            <p className="text-sm text-[#b9b9b9] leading-relaxed">
+              Are you sure you want to permanently delete this campaign? This will remove all sequence steps, targets, and history. This action cannot be undone.
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
               <button
-                onClick={() => setShowEnrolledDrawer(false)}
-                className="text-[#797979] hover:text-white cursor-pointer"
+                type="button"
+                onClick={() => setIsDeleteDialogOpen(false)}
+                disabled={isDeletingCampaign}
+                className="px-4 py-2 rounded-lg border border-[#353535] hover:border-[#b9b9b9] text-xs font-mono text-[#b9b9b9] hover:text-white transition-all cursor-pointer disabled:opacity-50"
               >
-                Close
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteCampaign}
+                disabled={isDeletingCampaign}
+                className="flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-xs font-bold font-mono transition-all shadow-lg shadow-red-600/30 cursor-pointer disabled:opacity-50"
+              >
+                {isDeletingCampaign ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirm Delete</span>
+                  </>
+                )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
 
-            {/* Excel / CSV Drag & Drop Upload Dropzone in Drawer */}
-            <div className="bg-[#0b0b0b] border border-dashed border-[#353535] hover:border-[#37cd84] rounded-lg p-4 text-center cursor-pointer transition-all">
-              <label className="cursor-pointer flex flex-col items-center gap-1.5">
-                <FileSpreadsheet className={`w-6 h-6 text-[#37cd84] ${isUploadingFile ? 'animate-bounce' : ''}`} />
-                <span className="text-xs font-semibold text-white">
-                  {isUploadingFile ? 'Uploading & Parsing File...' : 'Upload Excel / CSV Lead Sheet'}
-                </span>
-                <span className="text-[10px] text-[#797979]">
-                  Auto-imports, skips duplicates & updates queue immediately
-                </span>
-                <input
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={handleFileUpload}
-                  disabled={isUploadingFile}
-                  className="hidden"
-                />
-              </label>
-            </div>
-
-            {/* Action Buttons in Drawer */}
-            {enrolledLeads.length > 0 && (
-              <div className="space-y-2">
-                <button
-                  onClick={handleProcessCampaignImmediately}
-                  disabled={isProcessingAll}
-                  className="w-full flex items-center justify-center gap-2 bg-[#f36458] hover:bg-[#f36458]/90 text-white py-2.5 px-4 rounded text-xs font-bold cursor-pointer disabled:opacity-50 transition-all shadow-md"
-                >
-                  <Send className={`w-3.5 h-3.5 ${isProcessingAll ? 'animate-spin' : ''}`} />
-                  <span>{isProcessingAll ? 'Dispatching Sequence...' : 'Dispatch Sequence Immediately (Send All Now)'}</span>
-                </button>
-
-                <button
-                  onClick={handleBulkEnrollToBackend}
-                  disabled={isEnrollingBackend}
-                  className="w-full flex items-center justify-center gap-2 bg-[#212121] hover:bg-[#353535] border border-[#353535] text-[#b9b9b9] hover:text-white py-2 px-4 rounded text-xs font-medium cursor-pointer disabled:opacity-50 transition-all"
-                >
-                  <Server className={`w-3.5 h-3.5 ${isEnrollingBackend ? 'animate-spin' : ''}`} />
-                  <span>{isEnrollingBackend ? 'Syncing...' : 'Re-sync Queue to Database'}</span>
-                </button>
-              </div>
-            )}
-
-            {enrolledLeads.length === 0 ? (
-              <div className="text-center text-[#797979] py-12 space-y-2">
-                <p className="text-sm font-medium text-white">No leads currently enrolled</p>
-                <p className="text-xs">Import a spreadsheet above or go to View 1 (Lead Discovery) to add targets.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {enrolledLeads.map((lead, idx) => {
-                  const tracker = serverTrackers.find(
-                    (t) => t.email.toLowerCase() === lead.email.toLowerCase() || t.leadId === lead.id
-                  );
-
-                  return (
-                    <div
-                      key={lead.id ? `${lead.id}-${idx}` : idx}
-                      className="bg-[#0b0b0b] border border-[#353535] p-3 rounded-lg flex items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full bg-[#0052ef]/20 border border-[#0052ef]/40 text-[#4d8eff] flex items-center justify-center font-bold text-xs shrink-0 font-mono">
-                          {(lead.name || 'L').charAt(0).toUpperCase()}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="text-xs font-semibold text-white">{lead.name}</h4>
-                            {tracker && (
-                              <span className={`text-[9px] font-mono px-1.5 py-0.2 rounded uppercase ${
-                                tracker.status === 'COMPLETED' 
-                                  ? 'bg-emerald-950 text-[#37cd84] border border-[#37cd84]/40' 
-                                  : tracker.status === 'FAILED'
-                                  ? 'bg-red-950 text-[#f36458] border border-[#f36458]/40'
-                                  : 'bg-amber-950 text-amber-400 border border-amber-400/40'
-                              }`}>
-                                {tracker.status} · Step {tracker.currentStepOrder}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-[#b9b9b9]">{lead.title}</p>
-                          <p className="text-[10px] font-mono text-[#37cd84]">{lead.company}</p>
-                          {lead.email && (
-                            <p className="text-[10px] font-mono text-[#797979] truncate">{lead.email}</p>
-                          )}
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => onRemoveEnrolledLead(lead.id)}
-                        className="text-[#797979] hover:text-[#dd0000] p-1 cursor-pointer"
-                        title="Remove from sequence"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+      {/* Action Toast (Fixed overlay to eliminate layout shift and page shaking) */}
+      {syncFeedback && (
+        <div className="fixed bottom-6 right-6 z-50 pointer-events-none transition-all duration-300">
+          <div className="bg-[#181818] border border-[#37cd84]/50 shadow-2xl shadow-black/80 px-4 py-2.5 rounded-lg flex items-center gap-2.5 text-xs font-mono text-[#37cd84]">
+            <span className="w-2 h-2 rounded-full bg-[#37cd84] animate-pulse" />
+            <span>{syncFeedback}</span>
           </div>
         </div>
       )}

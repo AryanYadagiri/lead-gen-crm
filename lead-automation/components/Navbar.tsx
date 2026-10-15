@@ -1,13 +1,22 @@
 'use client';
 
-import React from 'react';
-import { Search, Send, Sparkles, Database, Users, ShieldCheck, Cpu } from 'lucide-react';
+import React, { useState } from 'react';
+import { Search, Send, Sparkles, Users, ChevronDown } from 'lucide-react';
+import { CampaignQueueTarget } from '../types/lead';
+import { EnrolledTargetsPopover } from './EnrolledTargetsPopover';
 
 interface NavbarProps {
   activeView: 'discovery' | 'outreach';
   setActiveView: (view: 'discovery' | 'outreach') => void;
   selectedLeadCount: number;
   enrolledLeadCount: number;
+  queueTargets?: CampaignQueueTarget[];
+  isQueueLoading?: boolean;
+  onClearQueue?: () => Promise<void>;
+  onDeleteTarget?: (id: string | number) => Promise<void>;
+  onUploadFile?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  isUploadingFile?: boolean;
+  onRefreshQueue?: () => Promise<any>;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -15,9 +24,18 @@ export const Navbar: React.FC<NavbarProps> = ({
   setActiveView,
   selectedLeadCount,
   enrolledLeadCount,
+  queueTargets,
+  isQueueLoading,
+  onClearQueue,
+  onDeleteTarget,
+  onUploadFile,
+  isUploadingFile,
+  onRefreshQueue,
 }) => {
+  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+
   return (
-    <header className="w-full bg-[#0b0b0b] border-b border-[#353535] sticky top-0 z-50 transition-all duration-200">
+    <header className="w-full bg-[#0b0b0b] border-b border-[#353535] sticky top-0 z-50">
       <div className="max-w-[1640px] mx-auto px-4 md:px-8 h-16 flex items-center justify-between">
         
         {/* Brand Lockup */}
@@ -28,24 +46,15 @@ export const Navbar: React.FC<NavbarProps> = ({
               Saniti <span className="text-[#f36458] font-mono text-xs uppercase tracking-widest font-normal ml-1">LeadOS</span>
             </span>
           </div>
-
-          <div className="hidden md:flex items-center space-x-1 pl-4 border-l border-[#353535]">
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-[#212121] text-[#37cd84] border border-[#353535] flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#37cd84]" /> Live Pipeline
-            </span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-[#212121] text-[#b9b9b9]">
-              Lead Database Connected
-            </span>
-          </div>
         </div>
 
         {/* Primary View Switcher */}
         <nav className="flex items-center bg-[#212121] p-1 rounded-full border border-[#353535]">
           <button
             onClick={() => setActiveView('discovery')}
-            className={`flex items-center gap-2 px-5 py-2 rounded-full text-xs font-medium transition-all duration-200 ${
+            className={`flex items-center gap-2 px-5 py-2 rounded-full text-xs font-medium transition-colors duration-150 ${
               activeView === 'discovery'
-                ? 'bg-white text-[#0b0b0b] shadow-md font-semibold'
+                ? 'bg-white text-[#0b0b0b] shadow-md'
                 : 'text-[#b9b9b9] hover:text-white hover:bg-[#353535]/50'
             }`}
           >
@@ -60,9 +69,9 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           <button
             onClick={() => setActiveView('outreach')}
-            className={`flex items-center gap-2 px-5 py-2 rounded-full text-xs font-medium transition-all duration-200 ${
+            className={`flex items-center gap-2 px-5 py-2 rounded-full text-xs font-medium transition-colors duration-150 ${
               activeView === 'outreach'
-                ? 'bg-white text-[#0b0b0b] shadow-md font-semibold'
+                ? 'bg-white text-[#0b0b0b] shadow-md'
                 : 'text-[#b9b9b9] hover:text-white hover:bg-[#353535]/50'
             }`}
           >
@@ -77,13 +86,44 @@ export const Navbar: React.FC<NavbarProps> = ({
         </nav>
 
         {/* Right Status Actions */}
-        <div className="hidden lg:flex items-center space-x-3">
-          <div className="flex items-center gap-2 text-xs font-mono text-[#b9b9b9] bg-[#212121] px-3 py-1.5 rounded-[4px] border border-[#353535]">
-            <Cpu className="w-3.5 h-3.5 text-[#f36458]" />
-            <span>Enrichment: <strong className="text-white">Active</strong></span>
-          </div>
+        <div className="flex items-center space-x-3">
+          {/* Enrolled Targets Queue Mini-Dashboard Popover Window */}
+          {queueTargets !== undefined && (
+            <div className="relative">
+              <button
+                onClick={() => {
+                  const nextState = !isPopoverOpen;
+                  setIsPopoverOpen(nextState);
+                  if (nextState && onRefreshQueue) {
+                    onRefreshQueue();
+                  }
+                }}
+                className="flex items-center gap-2 bg-[#212121] hover:bg-[#2c2c2c] border border-[#353535] hover:border-[#37cd84] text-white px-3.5 py-1.5 rounded-full text-xs font-mono transition-colors cursor-pointer shadow-sm"
+                title="View Enrolled Targets Queue Mini-Dashboard"
+              >
+                <Users className="w-3.5 h-3.5 text-[#f36458]" />
+                <span className="hidden sm:inline">Queue:</span>
+                <strong className="text-[#37cd84]">{enrolledLeadCount}</strong>
+                <ChevronDown className={`w-3 h-3 text-[#797979] transition-transform ${isPopoverOpen ? 'rotate-180' : ''}`} />
+              </button>
 
-          <button className="flex items-center gap-1.5 bg-[#f36458] text-[#0b0b0b] hover:bg-[#f36458]/90 font-medium text-xs px-4 py-2 rounded-full transition-all duration-200 shadow-sm cursor-pointer">
+              {onClearQueue && onDeleteTarget && onUploadFile && (
+                <EnrolledTargetsPopover
+                  isOpen={isPopoverOpen}
+                  onClose={() => setIsPopoverOpen(false)}
+                  queueTargets={queueTargets}
+                  isLoading={isQueueLoading || false}
+                  onClearQueue={onClearQueue}
+                  onDeleteTarget={onDeleteTarget}
+                  onUploadFile={onUploadFile}
+                  isUploadingFile={isUploadingFile}
+                  onRefresh={onRefreshQueue}
+                />
+              )}
+            </div>
+          )}
+
+          <button className="hidden lg:flex items-center gap-1.5 bg-[#f36458] text-[#0b0b0b] hover:bg-[#f36458]/90 font-medium text-xs px-4 py-2 rounded-full transition-all duration-200 shadow-sm cursor-pointer">
             <Sparkles className="w-3.5 h-3.5" />
             <span>AI Copilot</span>
           </button>

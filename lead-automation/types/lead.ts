@@ -101,3 +101,20 @@ export interface LeadSequenceTracker {
   revenue?: string;
   industry?: string;
 }
+
+export interface CampaignQueueTarget {
+  id: number;
+  leadId: string;
+  lead_id?: string;
+  name: string;
+  email: string;
+  phone?: string;
+  company: string;
+  title: string;
+  currentStep: number;
+  current_step?: number;
+  status: string;
+  location?: string;
+  industry?: string;
+}
+

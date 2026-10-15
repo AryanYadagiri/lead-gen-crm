@@ -13,9 +13,16 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestMethod;
+
 @RestController
 @RequestMapping("/api/campaign")
-@CrossOrigin(origins = "http://localhost:3000")
+@CrossOrigin(
+        origins = {"http://localhost:3000", "http://127.0.0.1:3000"},
+        methods = {RequestMethod.POST, RequestMethod.OPTIONS},
+        allowedHeaders = "*"
+)
 public class ExcelUploadController {
 
     private final ExcelReaderService reader;
@@ -24,9 +31,14 @@ public class ExcelUploadController {
         this.reader = reader;
     }
 
-    @PostMapping(value = "/excel-upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    /**
+     * POST /api/campaign/upload or POST /api/campaign/excel-upload
+     * Synchronously parses Excel/CSV file streams, saves entities to DB, and auto-enrolls leads into active campaign.
+     */
+    @PostMapping(value = {"/upload", "/excel-upload"}, consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
-    public LeadImportResponse excelUploader(@RequestParam("file") MultipartFile file) throws IOException {
-        return reader.importLeads(file);
+    public ResponseEntity<LeadImportResponse> uploadFile(@RequestParam("file") MultipartFile file) throws IOException {
+        LeadImportResponse response = reader.importLeads(file);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 }

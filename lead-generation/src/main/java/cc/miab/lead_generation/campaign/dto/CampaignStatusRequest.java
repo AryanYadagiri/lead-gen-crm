@@ -8,6 +8,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public record CampaignStatusRequest(
         @JsonAlias({"status"})
         @JsonProperty("status")
-        String status
+        String status,
+
+        @JsonAlias({"campaignId", "id"})
+        @JsonProperty("campaignId")
+        Long campaignId
 ) {
 }
