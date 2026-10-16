@@ -24,6 +24,7 @@ node_modules/
 .env
 .env.*
 *.local
+lead-generation/src/main/resources/application.properties.local
 *.log
 
 # OS-generated files
