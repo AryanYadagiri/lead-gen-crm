@@ -1,0 +1,31 @@
+# Version control
+.git/
+.gitignore
+
+# Local build artifacts and caches
+target/
+build/
+*.class
+
+# IDE and Editor configurations
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# Dependencies and caches
+node_modules/
+.next/
+.cache/
+
+# Environment and sensitive local files
+.env
+.env.*
+*.local
+*.log
+
+# OS-generated files
+.DS_Store
+Thumbs.db

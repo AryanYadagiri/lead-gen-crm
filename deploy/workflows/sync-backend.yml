@@ -1,0 +1,33 @@
+name: Sync Backend to Standalone Repository
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'lead-generation/**'
+  workflow_dispatch:
+
+jobs:
+  sync-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Monorepo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push Subtree to Backend Repository
+        env:
+          SYNC_PAT: ${{ secrets.BACKEND_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Extract the lead-generation subdirectory as a standalone branch
+          git subtree split --prefix=lead-generation -b sync-backend-branch
+          
+          # Push to the standalone repository
+          git remote add backend "https://x-access-token:${SYNC_PAT}@github.com/AryanYadagiri/lead-generation.git"
+          git push backend sync-backend-branch:main --force
+          git push backend sync-backend-branch:master --force

@@ -1,0 +1,39 @@
+#!/bin/sh
+
+remote="$1"
+url="$2"
+
+# Avoid recursive loop if pushing directly to backend
+if [ "$remote" = "backend" ] || echo "$url" | grep -q "AryanYadagiri/lead-generation"; then
+    exit 0
+fi
+
+# Trigger whenever pushing to origin or lead-gen-crm
+if [ "$remote" = "origin" ] || echo "$url" | grep -q "lead-gen-crm"; then
+    echo ""
+    echo "=========================================================="
+    echo "🔄 Auto-syncing backend subtree to AryanYadagiri/lead-generation..."
+    echo "=========================================================="
+
+    # Ensure backend remote exists
+    if ! git remote | grep -q "^backend$"; then
+        git remote add backend https://github.com/AryanYadagiri/lead-generation.git
+    fi
+
+    TEMP_BRANCH="_sync_backend_$(date +%s)"
+
+    # Extract lead-generation folder history into a clean standalone branch
+    if git subtree split --prefix=lead-generation -b "$TEMP_BRANCH" >/dev/null 2>&1; then
+        echo "📤 Pushing backend to https://github.com/AryanYadagiri/lead-generation.git..."
+        git push backend "$TEMP_BRANCH:master" --force --quiet
+        git push backend "$TEMP_BRANCH:main" --force --quiet
+        git branch -D "$TEMP_BRANCH" >/dev/null 2>&1
+        echo "✅ Backend successfully synchronized to AryanYadagiri/lead-generation!"
+    else
+        echo "⚠️ Warning: Could not create subtree split for lead-generation."
+    fi
+    echo "=========================================================="
+    echo ""
+fi
+
+exit 0
