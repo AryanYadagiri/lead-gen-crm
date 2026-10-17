@@ -9,7 +9,10 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/leads")
-@CrossOrigin(origins = "http://localhost:3000")
+@CrossOrigin(
+        originPatterns = {"http://localhost:[*]", "http://127.0.0.1:[*]", "https://*.vercel.app", "https://*.onrender.com"},
+        allowedHeaders = "*"
+)
 public class LeadQueryController {
     LeadQuery leadQueryService;
 

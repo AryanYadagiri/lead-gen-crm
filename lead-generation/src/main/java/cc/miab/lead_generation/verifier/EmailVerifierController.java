@@ -8,6 +8,10 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/verifier")
+@CrossOrigin(
+        originPatterns = {"http://localhost:[*]", "http://127.0.0.1:[*]", "https://*.vercel.app", "https://*.onrender.com"},
+        allowedHeaders = "*"
+)
 public class EmailVerifierController {
 
     private final EmailVerifierService emailVerifierService;

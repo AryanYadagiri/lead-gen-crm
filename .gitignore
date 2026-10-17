@@ -54,3 +54,6 @@ application.properties.local
 # Local AI / Agent configs
 .agents/
 .ai/
+
+.vercel
+.env*

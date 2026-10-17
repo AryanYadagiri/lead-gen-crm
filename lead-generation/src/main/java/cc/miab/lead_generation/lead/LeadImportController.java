@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RequestMethod;
 @RestController
 @RequestMapping("/api/leads")
 @CrossOrigin(
-        origins = {"http://localhost:3000", "http://127.0.0.1:3000"},
+        originPatterns = {"http://localhost:[*]", "http://127.0.0.1:[*]", "https://*.vercel.app", "https://*.onrender.com"},
         methods = {RequestMethod.POST, RequestMethod.OPTIONS},
         allowedHeaders = "*"
 )
