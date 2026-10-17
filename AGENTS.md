@@ -14,8 +14,9 @@ Configured in:
 - Global: `~/.gemini/config/mcp_config.json`
 
 ## 🌐 Full-Stack Architecture & Production Deployment
-- **Frontend**: Next.js App Router deployed on **Vercel** (`https://lead-gen-crm-five.vercel.app`)
-  - Project: `lead-gen-crm`
+- **Frontend**: Next.js App Router deployed on **Vercel**:
+  - Primary Project: `lead-gen-crm` (`https://lead-gen-crm-five.vercel.app`) - Root Directory: `lead-automation`
+  - Connected Project: `lead-automation` (`https://lead-automation-two.vercel.app`) - Root Directory: `lead-automation`
   - Env Var: `NEXT_PUBLIC_API_URL=https://lead-generation-backend-qw2l.onrender.com`
 - **Backend**: Spring Boot 4 + GraalVM Native Image deployed on **Render** (`https://lead-generation-backend-qw2l.onrender.com`)
   - Service ID: `srv-db930hcs728c73bjda80`
