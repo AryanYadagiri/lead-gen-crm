@@ -149,16 +149,106 @@ public class ExcelReaderService {
     }
 
     /**
-     * Flexible Excel reader inspecting headers dynamically.
+     * Reads Excel files using FastExcel for .xlsx (optimized for GraalVM native images),
+     * with graceful fallback to POI for legacy .xls files.
      */
     public List<Leads> readExcel(MultipartFile file) throws IOException {
+        String filename = file.getOriginalFilename() != null ? file.getOriginalFilename().toLowerCase() : "";
+        if (filename.endsWith(".xlsx") || "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".equalsIgnoreCase(file.getContentType())) {
+            try {
+                logger.info("Parsing .xlsx file '{}' using FastExcel streaming reader", filename);
+                return readFastExcel(file);
+            } catch (Throwable t) {
+                logger.warn("FastExcel reader encountered issue with '{}', falling back to POI: {}", filename, t.getMessage());
+            }
+        }
+        return readPoiExcel(file);
+    }
+
+    /**
+     * Ultra-fast, zero-reflection streaming reader for .xlsx files. Fully compatible with GraalVM Native Image.
+     */
+    public List<Leads> readFastExcel(MultipartFile file) throws IOException {
+        List<Leads> leads = new ArrayList<>();
+        try (InputStream is = file.getInputStream();
+             org.dhatim.fastexcel.reader.ReadableWorkbook wb = new org.dhatim.fastexcel.reader.ReadableWorkbook(is)) {
+
+            org.dhatim.fastexcel.reader.Sheet sheet = wb.findSheet("Lead Tracker").orElseGet(() -> {
+                try {
+                    return wb.getFirstSheet();
+                } catch (Exception e) {
+                    return null;
+                }
+            });
+
+            if (sheet == null) {
+                return leads;
+            }
+
+            try (java.util.stream.Stream<org.dhatim.fastexcel.reader.Row> rowStream = sheet.openStream()) {
+                java.util.Iterator<org.dhatim.fastexcel.reader.Row> iterator = rowStream.iterator();
+                if (!iterator.hasNext()) {
+                    return leads;
+                }
+
+                org.dhatim.fastexcel.reader.Row headerRow = iterator.next();
+                List<String> headers = new ArrayList<>();
+                for (int i = 0; i < headerRow.getCellCount(); i++) {
+                    headers.add(headerRow.getCellText(i));
+                }
+
+                HeaderMapping mapping = resolveHeaderMapping(headers);
+
+                while (iterator.hasNext()) {
+                    org.dhatim.fastexcel.reader.Row row = iterator.next();
+                    String email = mapping.emailIdx >= 0 && mapping.emailIdx < row.getCellCount()
+                            ? row.getCellText(mapping.emailIdx)
+                            : "";
+                    if (email == null || email.isBlank() || !email.contains("@")) {
+                        continue;
+                    }
+
+                    Leads lead = new Leads();
+                    lead.setEmail(email.trim());
+                    if (mapping.nameIdx >= 0 && mapping.nameIdx < row.getCellCount()) {
+                        lead.setName(row.getCellText(mapping.nameIdx));
+                    }
+                    if (mapping.companyIdx >= 0 && mapping.companyIdx < row.getCellCount()) {
+                        lead.setCompany(row.getCellText(mapping.companyIdx));
+                    }
+                    if (mapping.titleIdx >= 0 && mapping.titleIdx < row.getCellCount()) {
+                        lead.setDesignation(row.getCellText(mapping.titleIdx));
+                    }
+                    if (mapping.phoneIdx >= 0 && mapping.phoneIdx < row.getCellCount()) {
+                        lead.setNumber(row.getCellText(mapping.phoneIdx));
+                    }
+                    if (mapping.locationIdx >= 0 && mapping.locationIdx < row.getCellCount()) {
+                        lead.setLocation(row.getCellText(mapping.locationIdx));
+                        lead.setCity(row.getCellText(mapping.locationIdx));
+                    }
+                    if (mapping.industryIdx >= 0 && mapping.industryIdx < row.getCellCount()) {
+                        lead.setIndustry(row.getCellText(mapping.industryIdx));
+                    }
+                    if (mapping.revenueIdx >= 0 && mapping.revenueIdx < row.getCellCount()) {
+                        lead.setRevenue(row.getCellText(mapping.revenueIdx));
+                    }
+                    leads.add(lead);
+                }
+            }
+        }
+        return leads;
+    }
+
+    /**
+     * Fallback Excel reader using Apache POI.
+     */
+    public List<Leads> readPoiExcel(MultipartFile file) throws IOException {
         List<Leads> leads = new ArrayList<>();
         DataFormatter formatter = new DataFormatter();
 
         try (InputStream inputStream = file.getInputStream();
              Workbook workbook = WorkbookFactory.create(inputStream)) {
 
-            // Sheet fallback: check for "Lead Tracker" first, else get first sheet
             Sheet sheet = workbook.getSheet("Lead Tracker");
             if (sheet == null) {
                 if (workbook.getNumberOfSheets() == 0) {
@@ -180,7 +270,6 @@ public class ExcelReaderService {
 
             HeaderMapping mapping = resolveHeaderMapping(headers);
 
-            // If header did not explicitly match email, attempt fallback detection across first few rows
             if (mapping.emailIdx == -1) {
                 mapping.emailIdx = detectEmailColumnInRows(sheet, formatter, firstRowNum + 1);
             }

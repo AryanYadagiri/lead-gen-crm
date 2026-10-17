@@ -81,6 +81,12 @@
 			<scope>runtime</scope>
 			<optional>true</optional>
 		</dependency>
+		<!-- FastExcel Reader: Ultra-fast, zero-dependency streaming Excel reader optimized for GraalVM Native Image -->
+		<dependency>
+			<groupId>org.dhatim</groupId>
+			<artifactId>fastexcel-reader</artifactId>
+			<version>0.20.2</version>
+		</dependency>
 	</dependencies>
 
 	<build>
@@ -94,6 +100,11 @@
 				<artifactId>native-maven-plugin</artifactId>
 				<configuration>
 					<imageName>lead-generation</imageName>
+					<buildArgs>
+						<arg>--initialize-at-run-time=org.apache.poi.util.LocaleUtil</arg>
+						<arg>--initialize-at-run-time=org.apache.poi</arg>
+						<arg>-H:+AddAllCharsets</arg>
+					</buildArgs>
 				</configuration>
 			</plugin>
 		</plugins>
