@@ -8,9 +8,11 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.context.annotation.ImportRuntimeHints;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 
 @Configuration
+@ImportRuntimeHints(MailNativeRuntimeHints.class)
 public class AppConfig {
 
     @Bean
