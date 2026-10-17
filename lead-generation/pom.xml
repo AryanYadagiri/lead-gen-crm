@@ -100,6 +100,9 @@
 				<artifactId>native-maven-plugin</artifactId>
 				<configuration>
 					<imageName>lead-generation</imageName>
+					<metadataRepository>
+						<enabled>false</enabled>
+					</metadataRepository>
 					<buildArgs>
 						<arg>--initialize-at-run-time=org.apache.poi.util.LocaleUtil</arg>
 						<arg>--initialize-at-run-time=org.apache.poi</arg>
