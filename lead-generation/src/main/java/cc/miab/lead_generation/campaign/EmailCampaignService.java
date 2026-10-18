@@ -153,7 +153,7 @@ public class EmailCampaignService {
      * Non-blocking background runner scheduled to run hourly.
      */
     @Scheduled(cron = "${campaign.scheduler.cron:0 0 * * * *}")
-    public void executeScheduledOutreach() {
+    public int executeScheduledOutreach() {
         LocalDateTime now = LocalDateTime.now();
         logger.info("Starting scheduled outreach engine cycle at {}", now);
 
@@ -162,12 +162,14 @@ public class EmailCampaignService {
 
         logger.info("Found {} pending lead sequence tracker(s) ready for execution", pendingTrackers.size());
 
+        int dispatchedCount = 0;
         for (LeadSequenceTracker tracker : pendingTrackers) {
             if (isCampaignPaused(tracker.getCampaignId())) {
                 logger.info("Campaign ID {} is PAUSED. Skipping scheduled outreach for tracker ID {}.",
                         tracker.getCampaignId(), tracker.getId());
                 continue;
             }
+            dispatchedCount++;
             outreachTaskExecutor.execute(() -> {
                 try {
                     processTrackerById(tracker.getId());
@@ -176,6 +178,7 @@ public class EmailCampaignService {
                 }
             });
         }
+        return dispatchedCount;
     }
 
     /**
