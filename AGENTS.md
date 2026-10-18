@@ -24,3 +24,6 @@ Configured in:
 - **Docker Hub Repository**: `aryanyadagiri/lead-generation:latest`
 - **Standalone Backend GitHub**: `https://github.com/AryanYadagiri/lead-generation.git`
 - **Monorepo GitHub**: `https://github.com/AryanYadagiri/lead-gen-crm.git`
+- **External Cron Ping (Keep-Alive & Scheduler)**:
+  - URL: `https://lead-generation-backend-qw2l.onrender.com/api/cron/trigger-emails`
+  - Auth Header: `X-Cron-Secret: ${CRON_SECRET}` (Default: `miab-leadgen-cron-secret-2026`)
