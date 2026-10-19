@@ -42,7 +42,7 @@ public class CronController {
      * Secure ping endpoint for external cron services (cron-job.org) to prevent Render instance sleep
      * and trigger due scheduled sequence outreach emails.
      */
-    @GetMapping("/trigger-emails")
+    @RequestMapping(value = "/trigger-emails", method = {RequestMethod.GET, RequestMethod.HEAD, RequestMethod.POST})
     public ResponseEntity<Map<String, Object>> triggerEmails(
             @RequestHeader(value = "X-Cron-Secret", required = false) String cronSecretHeader) {
 
@@ -55,16 +55,25 @@ public class CronController {
             ));
         }
 
-        int dispatchedCount = emailCampaignService.executeScheduledOutreach();
+        try {
+            int dispatchedCount = emailCampaignService.executeScheduledOutreach();
 
-        logger.info("[CRON-PING] Trigger-emails endpoint invoked successfully. Server kept active. Dispatched {} scheduled lead tracker(s). Timestamp: {}",
-                dispatchedCount, Instant.now());
+            logger.info("[CRON-PING] Trigger-emails endpoint invoked successfully. Server kept active. Dispatched {} scheduled lead tracker(s). Timestamp: {}",
+                    dispatchedCount, Instant.now());
 
-        return ResponseEntity.ok(Map.of(
-                "status", "success",
-                "message", "Cron ping received. Render instance is active and email schedule cycle was executed.",
-                "dispatched_trackers", dispatchedCount,
-                "timestamp", Instant.now().toString()
-        ));
+            return ResponseEntity.ok(Map.of(
+                    "status", "success",
+                    "message", "Cron ping received. Render instance is active and email schedule cycle was executed.",
+                    "dispatched_trackers", dispatchedCount,
+                    "timestamp", Instant.now().toString()
+            ));
+        } catch (Exception ex) {
+            logger.error("[CRON-PING-ERROR] Error executing scheduled outreach: {}", ex.getMessage(), ex);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                    "status", "error",
+                    "message", "Error executing scheduled outreach: " + ex.getMessage(),
+                    "timestamp", Instant.now().toString()
+            ));
+        }
     }
 }
