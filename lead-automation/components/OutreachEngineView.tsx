@@ -473,7 +473,15 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
 
     try {
       setIsProcessingAll(true);
-      setSyncFeedback(`Dispatching sequence immediately to ${currentQueueData.length} enrolled lead(s)...`);
+      setSyncFeedback(`Syncing sequence steps and dispatching to ${currentQueueData.length} enrolled lead(s)...`);
+      
+      // Ensure backend has the latest sequence steps as edited in the UI
+      try {
+        await syncCampaignSteps(targetCampaignId, steps);
+      } catch (syncErr) {
+        console.warn('Could not sync steps before immediate process, continuing with stored steps:', syncErr);
+      }
+
       console.log(`[OutreachEngineView] Firing POST /api/campaigns/${targetCampaignId}/process-all for ${currentQueueData.length} leads...`);
 
       // Dispatch sequence immediately via backend orchestration

@@ -31,6 +31,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -91,22 +92,14 @@ public class EmailCampaignService {
 
         // Seed initial steps matching frontend DEFAULT_SEQUENCE_STEPS
         List<SequenceStep> initialSteps = List.of(
-                new SequenceStep(defaultCampaign.getId(), 1, "email", "Initial Executive Touch", 1,
-                        "Quick question regarding {{company_name}} scaling",
+                new SequenceStep(defaultCampaign.getId(), 1, "email", "Initial Email", 0,
+                        "Quick question about {{company_name}}'s growth strategy",
                         "Hi {{first_name}},\n\nI noticed {{company_name}} has been expanding rapidly in {{location}}'s {{industry}} sector.\n\nMany {{person_title}}s we speak with in companies around {{revenue}}M revenue are looking to scale their outbound acquisition pipeline without increasing headcount.\n\nWe recently helped a similar company scale their target outreach by 3.4x while maintaining high reply rates.\n\nWould you be open to a 10-minute executive briefing this Thursday?\n\nBest regards,\nLeadFlow Outreach Team",
                         true),
-                new SequenceStep(defaultCampaign.getId(), 2, "whatsapp", "Direct WhatsApp Intro", 2,
-                        "",
-                        "Hi {{first_name}} 👋 I sent an email to your inbox yesterday regarding {{company_name}}. Just wanted to reach out here directly in case WhatsApp is easier for a quick response! Would love to drop a 1-min video breakdown.",
-                        true),
-                new SequenceStep(defaultCampaign.getId(), 3, "email", "Case Study Follow-up", 3,
-                        "Case study: How SaaS leaders in {{industry}} increased qualified leads by 340%",
-                        "Hi {{first_name}},\n\nFollowing up on my previous note. Here is a brief 2-page teardown of how an executive team at a company similar to {{company_name}} unlocked predictable lead generation.\n\nKey takeaways:\n1. Advanced multi-channel sequencing (Email + WhatsApp)\n2. Automated profile enrichment\n3. Tier-1 verified direct dial routing\n\nAre you free for a quick call tomorrow afternoon?\n\nBest,\nLeadFlow Team",
-                        true),
-                new SequenceStep(defaultCampaign.getId(), 4, "whatsapp", "WhatsApp Value Nudge", 2,
-                        "",
-                        "Hey {{first_name}}, dropping a quick note on WhatsApp! We just released a customized benchmark report for {{industry}} leaders in {{location}}. Can I WhatsApp over the PDF summary? 📄",
-                        false)
+                new SequenceStep(defaultCampaign.getId(), 2, "email", "Follow-up Email #1", 1,
+                        "Following up on my previous message",
+                        "Hi {{first_name}},\n\nWanted to check if you had a moment to review my earlier note regarding {{company_name}}?\n\nBest regards,\nLeadFlow Outreach Team",
+                        true)
         );
 
         sequenceStepRepository.saveAll(initialSteps);
@@ -329,36 +322,41 @@ public class EmailCampaignService {
         }
 
         SequenceStep currentStep = currentStepOpt.get();
-        String channel = currentStep.getChannel() != null ? currentStep.getChannel().toLowerCase() : "email";
+        if (Boolean.FALSE.equals(currentStep.getIsActive())) {
+            logger.info("Step {} is inactive for campaign {}. Skipping dispatch for tracker ID {}.",
+                    tracker.getCurrentStepOrder(), tracker.getCampaignId(), tracker.getId());
+        } else {
+            String channel = currentStep.getChannel() != null ? currentStep.getChannel().toLowerCase() : "email";
 
-        String parsedSubject = parseTemplate(currentStep.getSubjectTemplate(), tracker);
-        String parsedBody = parseTemplate(currentStep.getBodyTemplate(), tracker);
+            String parsedSubject = parseTemplate(currentStep.getSubjectTemplate(), tracker);
+            String parsedBody = parseTemplate(currentStep.getBodyTemplate(), tracker);
 
-        try {
-            if ("whatsapp".equalsIgnoreCase(channel)) {
-                String targetPhone = tracker.getPhone() != null ? tracker.getPhone() : "[No Phone]";
-                logger.info("Dispatched WhatsApp step {} to recipient {} via Web API: {}",
-                        tracker.getCurrentStepOrder(), targetPhone, parsedBody);
-            } else {
-                // Verify email validity with MyEmailVerifier to prevent sending campaigns to invalid email IDs
-                MyEmailVerifierResponse verification = emailVerifierService.verifyEmail(tracker.getEmail());
-                if (verification != null && verification.isInvalid()) {
-                    logger.warn("Prevented email send for tracker ID {}: MyEmailVerifier reported Status='{}', Diagnosis='{}'. Marking tracker as INVALID_EMAIL to protect sender reputation.",
-                            tracker.getId(), verification.status(), verification.diagnosis());
-                    tracker.setStatus("INVALID_EMAIL");
-                    trackerRepository.save(tracker);
-                    return;
+            try {
+                if ("whatsapp".equalsIgnoreCase(channel)) {
+                    String targetPhone = tracker.getPhone() != null ? tracker.getPhone() : "[No Phone]";
+                    logger.info("Dispatched WhatsApp step {} to recipient {} via Web API: {}",
+                            tracker.getCurrentStepOrder(), targetPhone, parsedBody);
+                } else {
+                    // Verify email validity with MyEmailVerifier to prevent sending campaigns to invalid email IDs
+                    MyEmailVerifierResponse verification = emailVerifierService.verifyEmail(tracker.getEmail());
+                    if (verification != null && verification.isInvalid()) {
+                        logger.warn("Prevented email send for tracker ID {}: MyEmailVerifier reported Status='{}', Diagnosis='{}'. Marking tracker as INVALID_EMAIL to protect sender reputation.",
+                                tracker.getId(), verification.status(), verification.diagnosis());
+                        tracker.setStatus("INVALID_EMAIL");
+                        trackerRepository.save(tracker);
+                        return;
+                    }
+
+                    emailSenderService.sendEmail(tracker.getEmail(), parsedSubject, parsedBody);
+                    logger.info("Dispatched step {} email for campaign {} to {}",
+                            tracker.getCurrentStepOrder(), tracker.getCampaignId(), tracker.getEmail());
                 }
-
-                emailSenderService.sendEmail(tracker.getEmail(), parsedSubject, parsedBody);
-                logger.info("Dispatched step {} email for campaign {} to {}",
-                        tracker.getCurrentStepOrder(), tracker.getCampaignId(), tracker.getEmail());
+            } catch (Exception ex) {
+                logger.error("Failed to dispatch {} to {} for tracker ID: {}", channel, tracker.getEmail(), tracker.getId(), ex);
+                tracker.setStatus("FAILED");
+                trackerRepository.save(tracker);
+                return;
             }
-        } catch (Exception ex) {
-            logger.error("Failed to dispatch {} to {} for tracker ID: {}", channel, tracker.getEmail(), tracker.getId(), ex);
-            tracker.setStatus("FAILED");
-            trackerRepository.save(tracker);
-            return;
         }
 
         // Pacing to next step
@@ -368,7 +366,8 @@ public class EmailCampaignService {
         if (nextStepOpt.isPresent()) {
             SequenceStep nextStep = nextStepOpt.get();
             tracker.setCurrentStepOrder(tracker.getCurrentStepOrder() + 1);
-            tracker.setNextExecutionTime(LocalDateTime.now().plusDays(nextStep.getDelayDays()));
+            int delay = Math.max(0, nextStep.getDelayDays());
+            tracker.setNextExecutionTime(LocalDateTime.now().plusDays(delay));
             trackerRepository.save(tracker);
             logger.info("Advanced tracker ID {} to stepOrder {} with nextExecutionTime={}",
                     tracker.getId(), tracker.getCurrentStepOrder(), tracker.getNextExecutionTime());
@@ -764,5 +763,21 @@ public class EmailCampaignService {
     @Transactional(readOnly = true)
     public List<LeadSequenceTracker> getCampaignTrackers(Long campaignId) {
         return trackerRepository.findByCampaignId(campaignId);
+    }
+
+    @Transactional
+    public LeadSequenceTracker updateTracker(Long trackerId, Map<String, Object> updates) {
+        LeadSequenceTracker tracker = trackerRepository.findById(trackerId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tracker not found with ID: " + trackerId));
+        if (updates.containsKey("currentStepOrder")) {
+            tracker.setCurrentStepOrder(((Number) updates.get("currentStepOrder")).intValue());
+        }
+        if (updates.containsKey("status")) {
+            tracker.setStatus((String) updates.get("status"));
+        }
+        if (updates.containsKey("nextExecutionTime")) {
+            tracker.setNextExecutionTime(LocalDateTime.parse((String) updates.get("nextExecutionTime")));
+        }
+        return trackerRepository.save(tracker);
     }
 }

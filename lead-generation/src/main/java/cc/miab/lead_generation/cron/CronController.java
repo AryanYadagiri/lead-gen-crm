@@ -13,7 +13,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
 @RestController
@@ -26,6 +28,7 @@ import java.util.Map;
 public class CronController {
 
     private static final Logger logger = LoggerFactory.getLogger(CronController.class);
+    private static final ZoneId IST_ZONE = ZoneId.of("Asia/Kolkata");
 
     private final EmailCampaignService emailCampaignService;
     private final String expectedSecret;
@@ -35,6 +38,10 @@ public class CronController {
             @Value("${cron.secret:${CRON_SECRET:miab-leadgen-cron-secret-2026}}") String expectedSecret) {
         this.emailCampaignService = emailCampaignService;
         this.expectedSecret = expectedSecret;
+    }
+
+    private String currentIstTimestamp() {
+        return ZonedDateTime.now(IST_ZONE).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
     }
 
     /**
@@ -51,28 +58,29 @@ public class CronController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
                     "status", "error",
                     "message", "Unauthorized: Invalid or missing X-Cron-Secret header",
-                    "timestamp", Instant.now().toString()
+                    "timestamp_ist", currentIstTimestamp()
             ));
         }
 
         try {
             int dispatchedCount = emailCampaignService.executeScheduledOutreach();
 
-            logger.info("[CRON-PING] Trigger-emails endpoint invoked successfully. Server kept active. Dispatched {} scheduled lead tracker(s). Timestamp: {}",
-                    dispatchedCount, Instant.now());
+            logger.info("[CRON-PING] Trigger-emails endpoint invoked successfully. Server kept active. Dispatched {} scheduled lead tracker(s). Timestamp (IST): {}",
+                    dispatchedCount, currentIstTimestamp());
 
             return ResponseEntity.ok(Map.of(
                     "status", "success",
                     "message", "Cron ping received. Render instance is active and email schedule cycle was executed.",
                     "dispatched_trackers", dispatchedCount,
-                    "timestamp", Instant.now().toString()
+                    "timezone", "Asia/Kolkata (IST)",
+                    "timestamp_ist", currentIstTimestamp()
             ));
         } catch (Exception ex) {
             logger.error("[CRON-PING-ERROR] Error executing scheduled outreach: {}", ex.getMessage(), ex);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
                     "status", "error",
                     "message", "Error executing scheduled outreach: " + ex.getMessage(),
-                    "timestamp", Instant.now().toString()
+                    "timestamp_ist", currentIstTimestamp()
             ));
         }
     }

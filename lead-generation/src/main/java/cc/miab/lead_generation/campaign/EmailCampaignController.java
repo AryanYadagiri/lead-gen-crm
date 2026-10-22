@@ -197,6 +197,13 @@ public class EmailCampaignController {
         emailCampaignService.processTrackerAsync(trackerId);
     }
 
+    @PutMapping("/enrollments/{trackerId}")
+    public LeadSequenceTrackerResponse updateTracker(
+            @PathVariable Long trackerId,
+            @RequestBody Map<String, Object> updates) {
+        return LeadSequenceTrackerResponse.from(emailCampaignService.updateTracker(trackerId, updates));
+    }
+
     /**
      * Executes test sequence with real-time log lines for frontend console simulation.
      */

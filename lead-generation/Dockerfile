@@ -31,10 +31,14 @@ FROM ubuntu:latest AS runner
 
 WORKDIR /app
 
-# Install standard CA certificates for outbound HTTPS communication (SMTP, APIs, Webhooks)
+# Install standard CA certificates and timezone data
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates tzdata && \
+    ln -fs /usr/share/zoneinfo/Asia/Kolkata /etc/localtime && \
+    dpkg-reconfigure --frontend noninteractive tzdata && \
     rm -rf /var/lib/apt/lists/*
+
+ENV TZ="Asia/Kolkata"
 
 # Create a non-privileged system user and group for container security
 RUN groupadd -r appgroup && useradd -r -g appgroup -d /app -s /sbin/nologin appuser
