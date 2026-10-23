@@ -11,9 +11,40 @@ public record CampaignResponse(
         String name,
 
         @JsonProperty("status")
-        String status
+        String status,
+
+        @JsonProperty("sending_window_start")
+        String sendingWindowStart,
+
+        @JsonProperty("sending_window_end")
+        String sendingWindowEnd,
+
+        @JsonProperty("timezone")
+        String timezone,
+
+        @JsonProperty("allowed_days")
+        String allowedDays,
+
+        @JsonProperty("max_daily_limit")
+        Integer maxDailyLimit,
+
+        @JsonProperty("daily_sent_count")
+        Integer dailySentCount
 ) {
     public static CampaignResponse from(Campaign campaign) {
-        return new CampaignResponse(campaign.getId(), campaign.getName(), campaign.getStatus());
+        if (campaign == null) {
+            return null;
+        }
+        return new CampaignResponse(
+                campaign.getId(),
+                campaign.getName(),
+                campaign.getStatus(),
+                campaign.getSendingWindowStart(),
+                campaign.getSendingWindowEnd(),
+                campaign.getTimezone(),
+                campaign.getAllowedDays(),
+                campaign.getMaxDailyLimit(),
+                campaign.getDailySentCount()
+        );
     }
 }

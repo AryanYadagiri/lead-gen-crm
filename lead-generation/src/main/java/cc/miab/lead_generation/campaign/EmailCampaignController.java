@@ -56,7 +56,7 @@ public class EmailCampaignController {
     @ResponseStatus(HttpStatus.CREATED)
     public CampaignResponse createCampaign(@RequestBody CampaignRequest request) {
         return CampaignResponse.from(
-                emailCampaignService.createCampaign(request.name(), request.status()));
+                emailCampaignService.createCampaign(request));
     }
 
     @GetMapping
@@ -69,6 +69,24 @@ public class EmailCampaignController {
     @GetMapping("/{campaignId}")
     public CampaignResponse getCampaign(@PathVariable Long campaignId) {
         return CampaignResponse.from(emailCampaignService.getCampaign(campaignId));
+    }
+
+    @PutMapping({"/{campaignId}", ""})
+    public CampaignResponse updateCampaign(@PathVariable(required = false) Long campaignId,
+                                           @RequestBody CampaignRequest request) {
+        if (campaignId == null) {
+            campaignId = emailCampaignService.getOrCreateDefaultCampaign().getId();
+        }
+        return CampaignResponse.from(emailCampaignService.updateCampaign(campaignId, request));
+    }
+
+    @PatchMapping({"/{campaignId}", ""})
+    public CampaignResponse patchCampaign(@PathVariable(required = false) Long campaignId,
+                                          @RequestBody CampaignRequest request) {
+        if (campaignId == null) {
+            campaignId = emailCampaignService.getOrCreateDefaultCampaign().getId();
+        }
+        return CampaignResponse.from(emailCampaignService.updateCampaign(campaignId, request));
     }
 
     /**

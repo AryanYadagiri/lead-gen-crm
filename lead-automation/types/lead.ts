@@ -68,6 +68,12 @@ export interface Campaign {
   id: number;
   name: string;
   status: string;
+  sending_window_start?: string;
+  sending_window_end?: string;
+  timezone?: string;
+  allowed_days?: string;
+  max_daily_limit?: number;
+  daily_sent_count?: number;
 }
 
 export interface TestRunResult {

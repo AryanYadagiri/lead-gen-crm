@@ -1,5 +1,6 @@
 package cc.miab.lead_generation.campaign;
 
+import cc.miab.lead_generation.campaign.dto.CampaignRequest;
 import cc.miab.lead_generation.campaign.dto.EnrollLeadRequest;
 import cc.miab.lead_generation.email.EmailSenderService;
 import cc.miab.lead_generation.verifier.EmailVerifierService;
@@ -27,7 +28,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -88,7 +94,15 @@ public class EmailCampaignService {
         }
 
         logger.info("No campaign found. Initializing default automated outreach campaign...");
-        Campaign defaultCampaign = campaignRepository.save(new Campaign("Automated Outreach Sequence Studio", "READY"));
+        Campaign defaultCampaign = campaignRepository.save(new Campaign(
+                "Automated Outreach Sequence Studio",
+                "READY",
+                "09:00",
+                "17:00",
+                "Asia/Kolkata",
+                "MON,TUE,WED,THU,FRI",
+                50
+        ));
 
         // Seed initial steps matching frontend DEFAULT_SEQUENCE_STEPS
         List<SequenceStep> initialSteps = List.of(
@@ -105,6 +119,141 @@ public class EmailCampaignService {
         sequenceStepRepository.saveAll(initialSteps);
         logger.info("Successfully seeded default campaign ID {} with {} sequence steps", defaultCampaign.getId(), initialSteps.size());
         return defaultCampaign;
+    }
+
+    /**
+     * Resolves the target ZoneId configured on a Campaign, defaulting to Asia/Kolkata.
+     */
+    public ZoneId resolveCampaignZoneId(Campaign campaign) {
+        if (campaign == null || campaign.getTimezone() == null || campaign.getTimezone().isBlank()) {
+            return ZoneId.of("Asia/Kolkata");
+        }
+        try {
+            return ZoneId.of(campaign.getTimezone().trim());
+        } catch (Exception ex) {
+            logger.warn("Invalid timezone '{}' for campaign ID {}. Falling back to Asia/Kolkata.",
+                    campaign.getTimezone(), campaign.getId());
+            return ZoneId.of("Asia/Kolkata");
+        }
+    }
+
+    /**
+     * Parses time string (e.g. "09:00", "9:00", "09:00:00") into LocalTime with graceful fallback.
+     */
+    public LocalTime parseTimeOrDefault(String timeStr, LocalTime defaultTime) {
+        if (timeStr == null || timeStr.isBlank()) {
+            return defaultTime;
+        }
+        try {
+            String trimmed = timeStr.trim();
+            if (trimmed.length() == 4 && trimmed.charAt(1) == ':') {
+                trimmed = "0" + trimmed;
+            }
+            if (trimmed.length() == 5) {
+                return LocalTime.parse(trimmed, DateTimeFormatter.ofPattern("HH:mm"));
+            }
+            return LocalTime.parse(trimmed);
+        } catch (Exception ex) {
+            logger.warn("Unable to parse time string '{}'. Falling back to {}.", timeStr, defaultTime);
+            return defaultTime;
+        }
+    }
+
+    /**
+     * Time Window Check: Is the current time in the campaign's target timezone within
+     * sending_window_start and sending_window_end?
+     */
+    public boolean isWithinSendingWindow(Campaign campaign, ZonedDateTime nowInZone) {
+        LocalTime start = parseTimeOrDefault(campaign.getSendingWindowStart(), LocalTime.of(9, 0));
+        LocalTime end = parseTimeOrDefault(campaign.getSendingWindowEnd(), LocalTime.of(17, 0));
+        LocalTime current = nowInZone.toLocalTime();
+
+        if (start.isBefore(end)) {
+            return !current.isBefore(start) && !current.isAfter(end);
+        } else if (start.isAfter(end)) {
+            // Overnight window (e.g. 22:00 to 06:00)
+            return !current.isBefore(start) || !current.isAfter(end);
+        } else {
+            return true;
+        }
+    }
+
+    /**
+     * Day Check: Is today included in allowed_days? (e.g. ["MON", "TUE", "WED", "THU", "FRI"])
+     */
+    public boolean isAllowedDay(Campaign campaign, ZonedDateTime nowInZone) {
+        String allowedDays = campaign.getAllowedDays();
+        if (allowedDays == null || allowedDays.isBlank()) {
+            return true;
+        }
+        String day3 = nowInZone.getDayOfWeek().name().substring(0, 3).toUpperCase();
+        String fullDay = nowInZone.getDayOfWeek().name().toUpperCase();
+        String upperAllowed = allowedDays.toUpperCase();
+        return upperAllowed.contains(day3) || upperAllowed.contains(fullDay);
+    }
+
+    /**
+     * Throttling/Limits: Does sending another email exceed max_daily_limit for today?
+     * Resets the dailySentCount counter if the calendar day in the target timezone has advanced.
+     */
+    @Transactional
+    public boolean isUnderDailyLimitAndResetIfNewDay(Campaign campaign, ZonedDateTime nowInZone) {
+        LocalDate todayInZone = nowInZone.toLocalDate();
+        if (campaign.getLastDispatchDate() == null || !campaign.getLastDispatchDate().equals(todayInZone)) {
+            campaign.setDailySentCount(0);
+            campaign.setLastDispatchDate(todayInZone);
+            campaignRepository.save(campaign);
+        }
+
+        int maxLimit = campaign.getMaxDailyLimit() != null && campaign.getMaxDailyLimit() > 0
+                ? campaign.getMaxDailyLimit()
+                : 50;
+        int sentToday = campaign.getDailySentCount() != null ? campaign.getDailySentCount() : 0;
+        return sentToday < maxLimit;
+    }
+
+    /**
+     * Increments the campaign daily sent counter and persists the dispatch date in target timezone.
+     */
+    @Transactional
+    public synchronized void recordEmailDispatched(Long campaignId) {
+        if (campaignId == null) return;
+        campaignRepository.findById(campaignId).ifPresent(campaign -> {
+            ZoneId zoneId = resolveCampaignZoneId(campaign);
+            LocalDate todayInZone = ZonedDateTime.now(zoneId).toLocalDate();
+            if (campaign.getLastDispatchDate() == null || !campaign.getLastDispatchDate().equals(todayInZone)) {
+                campaign.setDailySentCount(1);
+                campaign.setLastDispatchDate(todayInZone);
+            } else {
+                int current = campaign.getDailySentCount() != null ? campaign.getDailySentCount() : 0;
+                campaign.setDailySentCount(current + 1);
+            }
+            campaignRepository.save(campaign);
+        });
+    }
+
+    /**
+     * Inspects remaining pending sequence trackers for the specified campaign.
+     * If zero pending trackers remain, automatically updates the campaign's status from RUNNING to COMPLETED.
+     */
+    @Transactional
+    public void checkAndCompleteCampaignIfDone(Long campaignId) {
+        if (campaignId == null) {
+            return;
+        }
+        campaignRepository.findById(campaignId).ifPresent(campaign -> {
+            String status = campaign.getStatus() != null ? campaign.getStatus().trim().toUpperCase() : "";
+            if ("RUNNING".equals(status) || "ACTIVE".equals(status) || "PROCESSING".equals(status)) {
+                long totalTrackers = trackerRepository.countByCampaignId(campaignId);
+                long pendingTrackers = trackerRepository.countByCampaignIdAndStatus(campaignId, "PENDING");
+                if (totalTrackers > 0 && pendingTrackers == 0) {
+                    campaign.setStatus("COMPLETED");
+                    campaignRepository.saveAndFlush(campaign);
+                    logger.info("Campaign ID {} has 0 pending emails/trackers remaining (total: {}). Status automatically updated to COMPLETED.",
+                            campaignId, totalTrackers);
+                }
+            }
+        });
     }
 
     /**
@@ -143,7 +292,7 @@ public class EmailCampaignService {
     }
 
     /**
-     * Non-blocking background runner scheduled to run hourly.
+     * Scheduled background outreach engine runner with timing window, allowed days, and daily limit controls.
      */
     @Scheduled(cron = "${campaign.scheduler.cron:0 0 * * * *}")
     public int executeScheduledOutreach() {
@@ -156,21 +305,81 @@ public class EmailCampaignService {
         logger.info("Found {} pending lead sequence tracker(s) ready for execution", pendingTrackers.size());
 
         int dispatchedCount = 0;
-        for (LeadSequenceTracker tracker : pendingTrackers) {
-            if (isCampaignPaused(tracker.getCampaignId())) {
-                logger.info("Campaign ID {} is PAUSED. Skipping scheduled outreach for tracker ID {}.",
-                        tracker.getCampaignId(), tracker.getId());
+        Set<Long> involvedCampaignIds = new HashSet<>();
+
+        // Group trackers by campaign to validate campaign timing windows and daily limits
+        Map<Long, List<LeadSequenceTracker>> trackersByCampaign = pendingTrackers.stream()
+                .collect(Collectors.groupingBy(LeadSequenceTracker::getCampaignId));
+
+        for (Map.Entry<Long, List<LeadSequenceTracker>> entry : trackersByCampaign.entrySet()) {
+            Long campaignId = entry.getKey();
+            List<LeadSequenceTracker> trackers = entry.getValue();
+            involvedCampaignIds.add(campaignId);
+
+            Optional<Campaign> campaignOpt = campaignRepository.findById(campaignId);
+            if (campaignOpt.isEmpty()) {
+                logger.warn("Campaign ID {} not found for pending trackers. Skipping.", campaignId);
                 continue;
             }
-            dispatchedCount++;
-            outreachTaskExecutor.execute(() -> {
-                try {
-                    processTrackerById(tracker.getId());
-                } catch (Exception ex) {
-                    logger.error("Unhandled exception while executing tracker ID: {}", tracker.getId(), ex);
+
+            Campaign campaign = campaignOpt.get();
+            String status = campaign.getStatus() != null ? campaign.getStatus().trim().toUpperCase() : "";
+
+            if ("PAUSED".equals(status)) {
+                logger.info("Campaign ID {} is PAUSED. Skipping scheduled outreach.", campaignId);
+                continue;
+            }
+
+            if ("COMPLETED".equals(status) || "FINISHED".equals(status)) {
+                logger.info("Campaign ID {} is already COMPLETED. Skipping scheduled outreach.", campaignId);
+                continue;
+            }
+
+            ZoneId zoneId = resolveCampaignZoneId(campaign);
+            ZonedDateTime nowInZone = ZonedDateTime.now(zoneId);
+
+            // 1. Day Check
+            if (!isAllowedDay(campaign, nowInZone)) {
+                logger.info("Campaign ID {} (Zone: {}): Today ({}) is not in allowed days ({}). Skipping dispatch until next allowed day.",
+                        campaignId, zoneId, nowInZone.getDayOfWeek(), campaign.getAllowedDays());
+                continue;
+            }
+
+            // 2. Time Window Check
+            if (!isWithinSendingWindow(campaign, nowInZone)) {
+                logger.info("Campaign ID {} (Zone: {}): Current time {} is outside sending window [{} - {}]. Skipping dispatch until next valid window.",
+                        campaignId, zoneId, nowInZone.toLocalTime(), campaign.getSendingWindowStart(), campaign.getSendingWindowEnd());
+                continue;
+            }
+
+            // 3. Throttling / Daily Limits Check
+            int maxDailyLimit = campaign.getMaxDailyLimit() != null && campaign.getMaxDailyLimit() > 0
+                    ? campaign.getMaxDailyLimit()
+                    : 50;
+
+            for (LeadSequenceTracker tracker : trackers) {
+                if (!isUnderDailyLimitAndResetIfNewDay(campaign, nowInZone)) {
+                    logger.info("Campaign ID {}: Daily limit of {} reached ({}/{} dispatched). Skipping remaining pending trackers until tomorrow.",
+                            campaignId, maxDailyLimit, campaign.getDailySentCount(), maxDailyLimit);
+                    break;
                 }
-            });
+
+                dispatchedCount++;
+                outreachTaskExecutor.execute(() -> {
+                    try {
+                        processTrackerById(tracker.getId());
+                    } catch (Exception ex) {
+                        logger.error("Unhandled exception while executing tracker ID: {}", tracker.getId(), ex);
+                    }
+                });
+            }
         }
+
+        // Post-dispatch completion check
+        for (Long cId : involvedCampaignIds) {
+            checkAndCompleteCampaignIfDone(cId);
+        }
+
         return dispatchedCount;
     }
 
@@ -195,12 +404,12 @@ public class EmailCampaignService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Campaign is paused. Please resume before starting.");
         }
 
-        // 3. State Persist: As soon as sequence starts, explicitly set status to RUNNING in DB to block simultaneous requests
+        // 3. State Persist: Explicitly set status to RUNNING in DB to lock simultaneous requests
         campaign.setStatus("RUNNING");
         campaignRepository.saveAndFlush(campaign);
         logger.info("Persisted campaign ID {} status to RUNNING in database to lock simultaneous execution.", campaignId);
 
-        // 1. Purge any duplicate trackers in trackerRepository for this campaign so each email has at most one tracker
+        // 4. Purge any duplicate trackers in trackerRepository for this campaign so each email has at most one tracker
         List<LeadSequenceTracker> existingTrackers = trackerRepository.findByCampaignId(campaignId);
         Set<String> uniqueEmails = new HashSet<>();
         List<LeadSequenceTracker> allTrackers = new ArrayList<>();
@@ -216,7 +425,7 @@ public class EmailCampaignService {
         }
         trackerRepository.flush();
 
-        // 2. Sync any leads from the database leads table that aren't yet in this campaign
+        // 5. Sync any leads from the database leads table that aren't yet in this campaign
         List<Leads> unassignedLeads = leadsRepository.findAll();
         for (Leads lead : unassignedLeads) {
             String email = lead.getEmail() != null ? lead.getEmail().trim().toLowerCase() : "";
@@ -241,7 +450,7 @@ public class EmailCampaignService {
             }
         }
 
-        // 2. Filter pending trackers; if all existing trackers are COMPLETED or FAILED, allow re-triggering them from step 1
+        // 6. Filter pending trackers; if all existing trackers are COMPLETED or FAILED, allow re-triggering them from step 1
         List<LeadSequenceTracker> trackersToProcess = allTrackers.stream()
                 .filter(t -> "PENDING".equalsIgnoreCase(t.getStatus()))
                 .toList();
@@ -257,6 +466,12 @@ public class EmailCampaignService {
                 resetTrackers.add(trackerRepository.save(t));
             }
             trackersToProcess = resetTrackers;
+        }
+
+        if (trackersToProcess.isEmpty()) {
+            logger.info("No trackers to process for campaign ID {}. Marking campaign as COMPLETED.", campaignId);
+            checkAndCompleteCampaignIfDone(campaignId);
+            return 0;
         }
 
         logger.info("Triggering immediate processing for {} tracker(s) in campaign ID {}",
@@ -318,6 +533,7 @@ public class EmailCampaignService {
                     tracker.getCampaignId(), tracker.getCurrentStepOrder(), tracker.getId());
             tracker.setStatus("COMPLETED");
             trackerRepository.save(tracker);
+            checkAndCompleteCampaignIfDone(tracker.getCampaignId());
             return;
         }
 
@@ -336,6 +552,7 @@ public class EmailCampaignService {
                     String targetPhone = tracker.getPhone() != null ? tracker.getPhone() : "[No Phone]";
                     logger.info("Dispatched WhatsApp step {} to recipient {} via Web API: {}",
                             tracker.getCurrentStepOrder(), targetPhone, parsedBody);
+                    recordEmailDispatched(tracker.getCampaignId());
                 } else {
                     // Verify email validity with MyEmailVerifier to prevent sending campaigns to invalid email IDs
                     MyEmailVerifierResponse verification = emailVerifierService.verifyEmail(tracker.getEmail());
@@ -344,10 +561,12 @@ public class EmailCampaignService {
                                 tracker.getId(), verification.status(), verification.diagnosis());
                         tracker.setStatus("INVALID_EMAIL");
                         trackerRepository.save(tracker);
+                        checkAndCompleteCampaignIfDone(tracker.getCampaignId());
                         return;
                     }
 
                     emailSenderService.sendEmail(tracker.getEmail(), parsedSubject, parsedBody);
+                    recordEmailDispatched(tracker.getCampaignId());
                     logger.info("Dispatched step {} email for campaign {} to {}",
                             tracker.getCurrentStepOrder(), tracker.getCampaignId(), tracker.getEmail());
                 }
@@ -355,6 +574,7 @@ public class EmailCampaignService {
                 logger.error("Failed to dispatch {} to {} for tracker ID: {}", channel, tracker.getEmail(), tracker.getId(), ex);
                 tracker.setStatus("FAILED");
                 trackerRepository.save(tracker);
+                checkAndCompleteCampaignIfDone(tracker.getCampaignId());
                 return;
             }
         }
@@ -375,6 +595,7 @@ public class EmailCampaignService {
             tracker.setStatus("COMPLETED");
             trackerRepository.save(tracker);
             logger.info("All sequence steps completed for tracker ID: {}. Marked as COMPLETED.", tracker.getId());
+            checkAndCompleteCampaignIfDone(tracker.getCampaignId());
         }
     }
 
@@ -678,6 +899,60 @@ public class EmailCampaignService {
         String resolvedStatus = (status == null || status.isBlank()) ? "ACTIVE" : status;
         Campaign saved = campaignRepository.save(new Campaign(name, resolvedStatus));
         logger.info("Created campaign ID {} with name '{}'", saved.getId(), saved.getName());
+        return saved;
+    }
+
+    @Transactional
+    public Campaign createCampaign(CampaignRequest request) {
+        String resolvedStatus = (request.status() == null || request.status().isBlank()) ? "ACTIVE" : request.status();
+        Campaign campaign = new Campaign(
+                request.name() != null ? request.name() : "Automated Outreach Sequence Studio",
+                resolvedStatus,
+                request.sendingWindowStart(),
+                request.sendingWindowEnd(),
+                request.timezone(),
+                request.resolvedAllowedDays(),
+                request.maxDailyLimit()
+        );
+        Campaign saved = campaignRepository.save(campaign);
+        logger.info("Created campaign ID {} with name '{}', window=[{}-{}], timezone={}, days={}, dailyLimit={}",
+                saved.getId(), saved.getName(), saved.getSendingWindowStart(), saved.getSendingWindowEnd(),
+                saved.getTimezone(), saved.getAllowedDays(), saved.getMaxDailyLimit());
+        return saved;
+    }
+
+    @Transactional
+    public Campaign updateCampaign(Long campaignId, CampaignRequest request) {
+        Campaign campaign = getCampaign(campaignId);
+        if (request.name() != null && !request.name().isBlank()) {
+            campaign.setName(request.name().trim());
+        }
+        if (request.status() != null && !request.status().isBlank()) {
+            String resolvedStatus = request.status().trim().toUpperCase();
+            if ("ACTIVE".equals(resolvedStatus)) {
+                resolvedStatus = "RUNNING";
+            }
+            campaign.setStatus(resolvedStatus);
+        }
+        if (request.sendingWindowStart() != null && !request.sendingWindowStart().isBlank()) {
+            campaign.setSendingWindowStart(request.sendingWindowStart().trim());
+        }
+        if (request.sendingWindowEnd() != null && !request.sendingWindowEnd().isBlank()) {
+            campaign.setSendingWindowEnd(request.sendingWindowEnd().trim());
+        }
+        if (request.timezone() != null && !request.timezone().isBlank()) {
+            campaign.setTimezone(request.timezone().trim());
+        }
+        if (request.resolvedAllowedDays() != null && !request.resolvedAllowedDays().isBlank()) {
+            campaign.setAllowedDays(request.resolvedAllowedDays().trim());
+        }
+        if (request.maxDailyLimit() != null && request.maxDailyLimit() > 0) {
+            campaign.setMaxDailyLimit(request.maxDailyLimit());
+        }
+        Campaign saved = campaignRepository.save(campaign);
+        logger.info("Updated campaign ID {} configuration: status={}, window=[{}-{}], timezone={}, days={}, dailyLimit={}",
+                saved.getId(), saved.getStatus(), saved.getSendingWindowStart(), saved.getSendingWindowEnd(),
+                saved.getTimezone(), saved.getAllowedDays(), saved.getMaxDailyLimit());
         return saved;
     }
 
