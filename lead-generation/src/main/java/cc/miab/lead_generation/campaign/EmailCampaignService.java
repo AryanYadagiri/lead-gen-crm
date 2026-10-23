@@ -90,7 +90,9 @@ public class EmailCampaignService {
     public Campaign getOrCreateDefaultCampaign() {
         List<Campaign> campaigns = campaignRepository.findAll();
         if (!campaigns.isEmpty()) {
-            return campaigns.get(0);
+            Campaign c = campaigns.get(0);
+            checkAndCompleteCampaignIfDone(c.getId());
+            return campaignRepository.findById(c.getId()).orElse(c);
         }
 
         logger.info("No campaign found. Initializing default automated outreach campaign...");
@@ -375,7 +377,11 @@ public class EmailCampaignService {
             }
         }
 
-        // Post-dispatch completion check
+        // Post-dispatch completion check for all running campaigns
+        List<Campaign> runningCampaigns = campaignRepository.findByStatus("RUNNING");
+        for (Campaign c : runningCampaigns) {
+            checkAndCompleteCampaignIfDone(c.getId());
+        }
         for (Long cId : involvedCampaignIds) {
             checkAndCompleteCampaignIfDone(cId);
         }
@@ -879,16 +885,21 @@ public class EmailCampaignService {
         return trackers;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<Campaign> getAllCampaigns(String status) {
+        List<Campaign> running = campaignRepository.findByStatus("RUNNING");
+        for (Campaign c : running) {
+            checkAndCompleteCampaignIfDone(c.getId());
+        }
         if (status == null || status.isBlank()) {
             return campaignRepository.findAll();
         }
         return campaignRepository.findByStatus(status);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Campaign getCampaign(Long campaignId) {
+        checkAndCompleteCampaignIfDone(campaignId);
         return campaignRepository.findById(campaignId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Campaign not found with ID: " + campaignId));
