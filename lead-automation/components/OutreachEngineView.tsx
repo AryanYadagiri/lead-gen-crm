@@ -1239,7 +1239,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                                 {step.channel}
                               </span>
                               <span className="text-[10px] font-mono text-[#b9b9b9]">
-                                Delay: {step.delayDays} day{step.delayDays > 1 ? 's' : ''}
+                                Delay: {step.delayDays === 0 ? '0 days (Same Day)' : `${step.delayDays} day${step.delayDays > 1 ? 's' : ''}`}
                               </span>
                             </div>
 
@@ -1363,7 +1363,13 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                   className="w-16 bg-[#0b0b0b] text-white border border-[#353535] rounded px-2 py-1 text-center font-mono focus:outline-none focus:border-[#f36458]"
                 />
                 <span>day(s)</span>
-                <span className="text-[10px] text-[#797979] font-mono">(max {MAX_STEP_DELAY_DAYS}d)</span>
+                {activeStep.delayDays === 0 ? (
+                  <span className="text-[10px] text-emerald-400 font-mono font-medium bg-emerald-950/40 border border-emerald-800/60 px-1.5 py-0.5 rounded">
+                    Same Day Dispatch
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-[#797979] font-mono">(max {MAX_STEP_DELAY_DAYS}d)</span>
+                )}
               </div>
             </div>
 

@@ -15,6 +15,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -180,5 +181,91 @@ class EmailCampaignServiceTest {
         verify(campaignRepository).saveAndFlush(campaign);
         verify(sequenceStepRepository).findByCampaignIdOrderByStepOrderAsc(campaignId);
         verify(trackerRepository).saveAllAndFlush(any());
+    }
+
+    @Test
+    void testCalculateNextExecutionTime_PreventWeekendBunching_DeferredStepPushesSubsequentStepRelatively() {
+        Campaign campaign = new Campaign("Outreach", "RUNNING");
+        campaign.setAllowedDays("MON,TUE,WED,THU,FRI");
+        campaign.setSendingWindowStart("09:00");
+        campaign.setSendingWindowEnd("17:00");
+        campaign.setTimezone("Asia/Kolkata");
+
+        // Step 1 was Friday. Step 2 (delay 1 day) lands on Saturday (weekend), pushed to Monday 09:00 AM
+        LocalDateTime fridayTenAm = LocalDateTime.of(2026, 10, 23, 10, 0); // Friday
+        assertEquals(DayOfWeek.FRIDAY, fridayTenAm.getDayOfWeek());
+
+        LocalDateTime step2ScheduledTime = service.calculateNextExecutionTime(fridayTenAm, 1, campaign);
+        assertEquals(DayOfWeek.MONDAY, step2ScheduledTime.getDayOfWeek());
+        assertEquals(LocalTime.of(9, 0), step2ScheduledTime.toLocalTime());
+
+        // Step 2 actually executes on Monday.
+        // Step 3's schedule MUST remain strictly relative to Step 2's actual execution time on Monday!
+        LocalDateTime step2ActualExecutionTime = LocalDateTime.of(2026, 10, 26, 9, 30); // Monday
+        assertEquals(DayOfWeek.MONDAY, step2ActualExecutionTime.getDayOfWeek());
+
+        // Step 3 delay is 1 day -> MUST push to Tuesday, NOT collapse onto Monday!
+        LocalDateTime step3ScheduledTime = service.calculateNextExecutionTime(step2ActualExecutionTime, 1, campaign);
+        assertEquals(DayOfWeek.TUESDAY, step3ScheduledTime.getDayOfWeek(), "Step 3 must push to Tuesday and not bunch onto Monday");
+        assertEquals(LocalTime.of(9, 30), step3ScheduledTime.toLocalTime());
+    }
+
+    @Test
+    void testCalculateNextExecutionTime_RespectIntentionalZeroDayDelay() {
+        Campaign campaign = new Campaign("Outreach", "RUNNING");
+        campaign.setAllowedDays("MON,TUE,WED,THU,FRI");
+        campaign.setSendingWindowStart("09:00");
+        campaign.setSendingWindowEnd("17:00");
+        campaign.setTimezone(ZoneId.systemDefault().getId());
+
+        // Inside window on Wednesday 11:00 AM with delay = 0
+        LocalDateTime wednesdayElevenAm = LocalDateTime.of(2026, 10, 21, 11, 0);
+        assertEquals(DayOfWeek.WEDNESDAY, wednesdayElevenAm.getDayOfWeek());
+
+        LocalDateTime nextExecutionTime = service.calculateNextExecutionTime(wednesdayElevenAm, 0, campaign);
+        assertEquals(wednesdayElevenAm, nextExecutionTime, "0-day delay must allow immediate/same-day execution");
+    }
+
+    @Test
+    void testProcessTracker_RespectIntentionalZeroDayDelay_SendsMultipleStepsSameDay() {
+        Long campaignId = 10L;
+        Campaign campaign = new Campaign("Outreach", "RUNNING");
+        campaign.setId(campaignId);
+        campaign.setMaxDailyLimit(50);
+        campaign.setDailySentCount(0);
+        campaign.setSendingWindowStart("00:00");
+        campaign.setSendingWindowEnd("23:59");
+        campaign.setAllowedDays("MON,TUE,WED,THU,FRI,SAT,SUN");
+        campaign.setTimezone(ZoneId.systemDefault().getId());
+
+        when(campaignRepository.findById(campaignId)).thenReturn(Optional.of(campaign));
+
+        // Step 1 (delay 0)
+        cc.miab.lead_generation.campaign.entity.SequenceStep step1 =
+                new cc.miab.lead_generation.campaign.entity.SequenceStep(campaignId, 1, "email", "Step 1", 0, "Subject 1", "Body 1", true);
+        // Step 2 (delay 0 - intentional 0-day delay)
+        cc.miab.lead_generation.campaign.entity.SequenceStep step2 =
+                new cc.miab.lead_generation.campaign.entity.SequenceStep(campaignId, 2, "email", "Step 2", 0, "Subject 2", "Body 2", true);
+
+        when(sequenceStepRepository.findByCampaignIdAndStepOrder(campaignId, 1)).thenReturn(Optional.of(step1));
+        when(sequenceStepRepository.findByCampaignIdAndStepOrder(campaignId, 2)).thenReturn(Optional.of(step2));
+        when(sequenceStepRepository.findByCampaignIdAndStepOrder(campaignId, 3)).thenReturn(Optional.empty());
+
+        when(emailVerifierService.verifyEmail(anyString())).thenReturn(null);
+
+        cc.miab.lead_generation.campaign.entity.LeadSequenceTracker tracker =
+                new cc.miab.lead_generation.campaign.entity.LeadSequenceTracker();
+        tracker.setId(501L);
+        tracker.setLeadId("lead-501");
+        tracker.setEmail("multi@example.com");
+        tracker.setCampaignId(campaignId);
+        tracker.setStatus("PENDING");
+        tracker.setCurrentStepOrder(1);
+
+        service.processTracker(tracker);
+
+        // Verify both Step 1 and Step 2 emails were sent to the same lead
+        verify(emailSenderService, times(2)).sendEmail(eq("multi@example.com"), anyString(), anyString());
+        assertEquals("COMPLETED", tracker.getStatus(), "Tracker should complete after both steps are delivered");
     }
 }

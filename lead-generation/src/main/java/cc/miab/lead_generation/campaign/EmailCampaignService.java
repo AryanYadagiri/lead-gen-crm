@@ -215,6 +215,75 @@ public class EmailCampaignService {
     }
 
     /**
+     * Advances a ZonedDateTime candidate to the next allowed day at the specified windowStart.
+     */
+    public ZonedDateTime advanceToNextAllowedDay(ZonedDateTime from, Campaign campaign, LocalTime windowStart) {
+        ZonedDateTime candidate = from.with(windowStart);
+        int guard = 0;
+        while (!isAllowedDay(campaign, candidate) && guard < 14) {
+            candidate = candidate.plusDays(1);
+            guard++;
+        }
+        return candidate;
+    }
+
+    /**
+     * Calculates the next execution timestamp following outreach rules:
+     * 1. Strictly relative to the actual execution time of the previous step, preventing weekend bunching.
+     *    (e.g., If Step 2 is pushed to Monday, Step 3's delay is calculated from Monday, pushing it to Tuesday).
+     * 2. Respects intentional 0-day delays (same day execution if allowed; rolls forward to next valid window if outside).
+     * 3. Respects campaign allowed_days (e.g. MON,TUE,WED,THU,FRI), skipping weekends to the next allowed day.
+     * 4. Aligns to sending_window_start / sending_window_end in the campaign's target timezone.
+     */
+    public LocalDateTime calculateNextExecutionTime(LocalDateTime actualExecutionTime, int delayDays, Campaign campaign) {
+        if (actualExecutionTime == null) {
+            actualExecutionTime = LocalDateTime.now();
+        }
+        if (campaign == null) {
+            return actualExecutionTime.plusDays(Math.max(0, delayDays));
+        }
+
+        ZoneId zoneId = resolveCampaignZoneId(campaign);
+        ZonedDateTime zdt = actualExecutionTime.atZone(ZoneId.systemDefault()).withZoneSameInstant(zoneId);
+
+        LocalTime windowStart = parseTimeOrDefault(campaign.getSendingWindowStart(), LocalTime.of(9, 0));
+        LocalTime windowEnd = parseTimeOrDefault(campaign.getSendingWindowEnd(), LocalTime.of(17, 0));
+
+        if (delayDays <= 0) {
+            // Intentional 0-day delay: same day if currently in allowed day and sending window
+            if (isAllowedDay(campaign, zdt) && isWithinSendingWindow(campaign, zdt)) {
+                return zdt.withZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
+            }
+            // If today is an allowed day but before the sending window start, align to windowStart today
+            if (isAllowedDay(campaign, zdt) && zdt.toLocalTime().isBefore(windowStart)) {
+                zdt = zdt.with(windowStart);
+                return zdt.withZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
+            }
+            // Otherwise (window ended today or not an allowed day), advance to next allowed day at windowStart
+            zdt = advanceToNextAllowedDay(zdt.plusDays(1), campaign, windowStart);
+            return zdt.withZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
+        }
+
+        // delayDays > 0: Calculate strictly relative to the actual execution time of the previous step
+        zdt = zdt.plusDays(delayDays);
+
+        // If the calculated target day lands on a weekend or non-allowed day, defer to next allowed day
+        if (!isAllowedDay(campaign, zdt)) {
+            zdt = advanceToNextAllowedDay(zdt, campaign, windowStart);
+        } else {
+            // Target is an allowed day: ensure it respects sending window
+            if (zdt.toLocalTime().isBefore(windowStart)) {
+                zdt = zdt.with(windowStart);
+            } else if (zdt.toLocalTime().isAfter(windowEnd)) {
+                // If the time of day is past the window end, push to the next allowed day at windowStart
+                zdt = advanceToNextAllowedDay(zdt.plusDays(1), campaign, windowStart);
+            }
+        }
+
+        return zdt.withZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
+    }
+
+    /**
      * Increments the campaign daily sent counter and persists the dispatch date in target timezone.
      */
     @Transactional
@@ -595,13 +664,60 @@ public class EmailCampaignService {
             SequenceStep nextStep = nextStepOpt.get();
             tracker.setCurrentStepOrder(tracker.getCurrentStepOrder() + 1);
             int delay = Math.max(0, nextStep.getDelayDays());
-            tracker.setNextExecutionTime(LocalDateTime.now().plusDays(delay));
-            trackerRepository.save(tracker);
-            logger.info("Advanced tracker ID {} to stepOrder {} with nextExecutionTime={}",
-                    tracker.getId(), tracker.getCurrentStepOrder(), tracker.getNextExecutionTime());
+            LocalDateTime actualExecutionTime = LocalDateTime.now();
+
+            Campaign campaign = getCampaign(tracker.getCampaignId());
+            ZoneId zoneId = resolveCampaignZoneId(campaign);
+            ZonedDateTime nowInZone = ZonedDateTime.now(zoneId);
+            LocalTime windowStart = parseTimeOrDefault(campaign.getSendingWindowStart(), LocalTime.of(9, 0));
+
+            if (delay == 0) {
+                // Rule: Respect Intentional 0-Day Delays
+                // If a user configures a step with a 0 day delay, allow multiple emails to send to the same lead in a single day (subject to daily quotas and sending windows).
+                boolean running = !isCampaignPaused(campaign.getId());
+                boolean allowedDay = isAllowedDay(campaign, nowInZone);
+                boolean withinWindow = isWithinSendingWindow(campaign, nowInZone);
+                boolean underQuota = isUnderDailyLimitAndResetIfNewDay(campaign, nowInZone);
+
+                if (running && allowedDay && withinWindow && underQuota) {
+                    tracker.setNextExecutionTime(actualExecutionTime);
+                    trackerRepository.saveAndFlush(tracker);
+                    logger.info("Intentional 0-day delay: Executing Step {} immediately for lead {} in campaign {} (same-day multiple email dispatch allowed)",
+                            tracker.getCurrentStepOrder(), tracker.getEmail(), tracker.getCampaignId());
+                    processTracker(tracker);
+                    return;
+                } else {
+                    // Deferred due to daily quota reached, closed window, or non-allowed day
+                    LocalDateTime nextExec;
+                    if (!underQuota) {
+                        // Quota reached: advance to next allowed day at window start
+                        nextExec = advanceToNextAllowedDay(
+                                nowInZone.plusDays(1),
+                                campaign,
+                                windowStart
+                        ).withZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
+                    } else {
+                        nextExec = calculateNextExecutionTime(actualExecutionTime, 0, campaign);
+                    }
+                    tracker.setNextExecutionTime(nextExec);
+                    trackerRepository.saveAndFlush(tracker);
+                    logger.info("0-day delay Step {} for tracker ID {} deferred to {} (outside sending window, not allowed day, or quota reached)",
+                            tracker.getCurrentStepOrder(), tracker.getId(), nextExec);
+                }
+            } else {
+                // Rule: Prevent Weekend Bunching
+                // When a step is deferred due to a non-allowed day (e.g., weekend), subsequent steps must not collapse onto the next business day.
+                // Their schedules must remain strictly relative to the actual execution time of the previous step.
+                // (e.g., If Step 2 is pushed to Monday, Step 3's delay is calculated from Monday, pushing it to Tuesday).
+                LocalDateTime nextExec = calculateNextExecutionTime(actualExecutionTime, delay, campaign);
+                tracker.setNextExecutionTime(nextExec);
+                trackerRepository.saveAndFlush(tracker);
+                logger.info("Advanced tracker ID {} to stepOrder {} with delay {} day(s) strictly relative to actual execution time {}. nextExecutionTime={}",
+                        tracker.getId(), tracker.getCurrentStepOrder(), delay, actualExecutionTime, nextExec);
+            }
         } else {
             tracker.setStatus("COMPLETED");
-            trackerRepository.save(tracker);
+            trackerRepository.saveAndFlush(tracker);
             logger.info("All sequence steps completed for tracker ID: {}. Marked as COMPLETED.", tracker.getId());
             checkAndCompleteCampaignIfDone(tracker.getCampaignId());
         }
@@ -691,12 +807,20 @@ public class EmailCampaignService {
             String parsedBody = parseTemplate(step.getBodyTemplate(), lead);
 
             if ("whatsapp".equalsIgnoreCase(channel)) {
-                logs.add(String.format("[Delay %d Day(s) simulated...]", step.getDelayDays()));
+                if (step.getDelayDays() == 0) {
+                    logs.add("[Same Day / 0-Day Delay simulated...]");
+                } else {
+                    logs.add(String.format("[Delay %d Day(s) simulated...]", step.getDelayDays()));
+                }
                 logs.add(String.format("[Step %d] Triggering WhatsApp Web API to %s...", stepNum, phone));
                 logs.add(String.format("[Step %d] WhatsApp Message Sent & Delivered (Double Blue Tick Verified)!", stepNum));
             } else {
                 if (stepNum > 1) {
-                    logs.add(String.format("[Delay %d Day(s) simulated...]", step.getDelayDays()));
+                    if (step.getDelayDays() == 0) {
+                        logs.add("[Same Day / 0-Day Delay simulated...]");
+                    } else {
+                        logs.add(String.format("[Delay %d Day(s) simulated...]", step.getDelayDays()));
+                    }
                 }
                 if (!isEmailDeliverable) {
                     logs.add(String.format("[09:%02d AM] ⛔ Step %d Email Blocked: Recipient %s is INVALID (%s). Dispatch aborted.",
@@ -840,7 +964,8 @@ public class EmailCampaignService {
         tracker.setPhone(phone);
         tracker.setCampaignId(campaignId);
         tracker.setCurrentStepOrder(1);
-        tracker.setNextExecutionTime(LocalDateTime.now().plusDays(initialDelayDays));
+        Campaign campaign = getCampaign(campaignId);
+        tracker.setNextExecutionTime(calculateNextExecutionTime(LocalDateTime.now(), initialDelayDays, campaign));
         tracker.setStatus("PENDING");
         tracker.setFirstName(firstName);
         tracker.setFullName(fullName);
