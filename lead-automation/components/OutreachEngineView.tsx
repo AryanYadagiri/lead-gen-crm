@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SequenceStep, Lead, StepChannel, Campaign, LeadSequenceTracker, CampaignQueueTarget } from '../types/lead';
 import { DEFAULT_SEQUENCE_STEPS, VARIABLE_TAGS } from '../data/mockLeads';
 import { EnrolledTargetsPopover } from './EnrolledTargetsPopover';
+import { CampaignScheduleModal } from './CampaignScheduleModal';
 import { 
   getActiveCampaign, 
   getCampaignSteps, 
@@ -14,13 +15,15 @@ import {
   getCampaignTrackers,
   processAllCampaignTrackers,
   updateCampaignStatus,
-  deleteCampaign
+  deleteCampaign,
+  updateCampaignSettings
 } from '../utils/apiClient';
 import { 
   Mail, MessageSquare, Plus, Trash2, ArrowUp, ArrowDown, Sparkles, 
   Send, CheckCheck, Smartphone, Info, Play, CheckCircle2, ShieldAlert,
   ChevronRight, Users, Settings2, Code, Eye, RefreshCw, Server, Check, 
-  AlertCircle, FileSpreadsheet, Upload, Zap, Clock, Pause, AlertTriangle
+  AlertCircle, FileSpreadsheet, Upload, Zap, Clock, Pause, AlertTriangle,
+  Calendar, Globe, Sliders, ShieldCheck
 } from 'lucide-react';
 
 interface OutreachEngineViewProps {
@@ -73,6 +76,8 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   const [isUpdatingStatus, setIsUpdatingStatus] = useState<boolean>(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState<boolean>(false);
   const [isDeletingCampaign, setIsDeletingCampaign] = useState<boolean>(false);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState<boolean>(false);
+  const [isSavingSchedule, setIsSavingSchedule] = useState<boolean>(false);
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -343,6 +348,30 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   const campaignStatus = campaign?.status?.toUpperCase() || '';
   const isCampaignRunning = campaignStatus === 'RUNNING' || campaignStatus === 'PROCESSING' || campaignStatus === 'ACTIVE';
   const isCampaignPaused = campaignStatus === 'PAUSED';
+  const isCampaignCompleted = campaignStatus === 'COMPLETED' || campaignStatus === 'FINISHED';
+
+  // ---------------------------------------------------------------------------
+  // Save Campaign Timing Windows & Daily Limits (PUT /api/campaigns/:id)
+  // ---------------------------------------------------------------------------
+  const handleSaveCampaignSchedule = async (updatedSettings: Partial<Campaign>) => {
+    if (!campaign) return;
+    try {
+      setIsSavingSchedule(true);
+      console.log(`[OutreachEngineView] Updating schedule for campaign #${campaign.id}:`, updatedSettings);
+      const updated = await updateCampaignSettings(campaign.id, updatedSettings);
+      setCampaign(updated);
+      setSyncFeedback('Outreach sending window & daily limits saved!');
+      setTimeout(() => setSyncFeedback(null), 3000);
+    } catch (err: any) {
+      console.error('Failed to update campaign schedule settings:', err);
+      const errMsg = err.response?.data?.message || err.message || 'Failed to update schedule';
+      setSyncFeedback(`Schedule error: ${errMsg}`);
+      setTimeout(() => setSyncFeedback(null), 4000);
+      throw err;
+    } finally {
+      setIsSavingSchedule(false);
+    }
+  };
 
   // ---------------------------------------------------------------------------
   // Pause / Resume Campaign Status (PUT /api/campaign/status)
@@ -423,7 +452,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   // ---------------------------------------------------------------------------
   const currentQueueData = (queueTargets && queueTargets.length > 0) ? queueTargets : enrolledLeads;
   const activeQueueCount = currentQueueData.length;
-  const isLaunchDisabled = isProcessingAll || isCampaignRunning || isCampaignPaused || activeQueueCount === 0;
+  const isLaunchDisabled = isProcessingAll || isCampaignRunning || isCampaignPaused || (activeQueueCount === 0 && !isCampaignCompleted);
 
   const handleProcessCampaignImmediately = useCallback(async () => {
     // 3. Immediate console debugging tracking live active queue data
@@ -464,7 +493,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
       return;
     }
 
-    if (currentQueueData.length === 0) {
+    if (currentQueueData.length === 0 && !isCampaignCompleted) {
       console.warn("Process Sequence aborted: active queue has 0 leads");
       setSyncFeedback('Queue is empty. Import or enroll leads first.');
       setTimeout(() => setSyncFeedback(null), 3500);
@@ -672,6 +701,8 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                     ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' 
                     : isCampaignRunning
                     ? 'bg-[#37cd84]/10 border-[#37cd84]/30 text-[#37cd84]'
+                    : isCampaignCompleted
+                    ? 'bg-blue-500/15 border-blue-500/40 text-blue-300'
                     : 'bg-zinc-500/10 border-zinc-500/30 text-zinc-400'
                 }`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${
@@ -679,9 +710,17 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                       ? 'bg-amber-400 animate-pulse' 
                       : isCampaignRunning 
                       ? 'bg-[#37cd84] animate-pulse' 
+                      : isCampaignCompleted
+                      ? 'bg-blue-400'
                       : 'bg-zinc-400'
                   }`} />
-                  {isCampaignPaused ? 'PAUSED' : isCampaignRunning ? 'RUNNING' : (campaign.status?.toUpperCase() || 'READY')}
+                  {isCampaignPaused 
+                    ? 'PAUSED' 
+                    : isCampaignRunning 
+                    ? 'RUNNING' 
+                    : isCampaignCompleted 
+                    ? 'COMPLETED' 
+                    : (campaign.status?.toUpperCase() || 'READY')}
                 </span>
               </div>
             )}
@@ -742,6 +781,21 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
               />
             )}
           </div>
+
+          {/* Sending Window & Timing Controls Button */}
+          <button
+            onClick={() => setIsScheduleModalOpen(true)}
+            className="flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#55beff] px-3.5 py-2 rounded-[4px] text-xs font-mono text-white hover:text-[#55beff] cursor-pointer transition-all"
+            title="Configure sending windows, business hours, timezone, and daily limits"
+          >
+            <Clock className="w-4 h-4 text-[#55beff]" />
+            <span>
+              Window: <strong className="text-white">{campaign?.sending_window_start || '09:00'} - {campaign?.sending_window_end || '17:00'}</strong>
+            </span>
+            <span className="text-[10px] bg-[#161616] text-[#37cd84] px-1.5 py-0.5 rounded border border-[#353535]">
+              {campaign?.daily_sent_count ?? 0}/{campaign?.max_daily_limit ?? 50} today
+            </span>
+          </button>
 
           {/* Pause / Resume Campaign Button / Toggle */}
           <button
@@ -811,11 +865,44 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                 ? 'Dispatching...' 
                 : isCampaignRunning 
                 ? 'Campaign Active & Processing' 
+                : isCampaignCompleted
+                ? 'Restart Sequence (Send Again)'
                 : 'Process Sequence (Send Now)'}
             </span>
           </button>
         </div>
       </div>
+
+      {/* Visual Badge/Banner: Campaign Completed */}
+      {isCampaignCompleted && (
+        <div className="bg-blue-950/20 border border-blue-500/30 text-blue-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in duration-200 shadow-md shadow-blue-950/10">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-blue-500/20 flex items-center justify-center shrink-0 border border-blue-500/30 text-blue-400">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-blue-300 font-sans tracking-tight flex items-center gap-2">
+                <span>Campaign Outreach Completed</span>
+                <span className="bg-blue-500/20 text-blue-300 text-[10px] font-mono px-2 py-0.5 rounded border border-blue-500/30 uppercase">
+                  Completed
+                </span>
+              </div>
+              <div className="text-xs text-blue-200/70 font-mono mt-0.5">
+                All multi-step sequence emails & touchpoints have been processed for enrolled targets. Zero pending emails remaining.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={handleProcessCampaignImmediately}
+            disabled={isProcessingAll}
+            className="flex items-center gap-2 bg-[#f36458] hover:bg-[#f36458]/90 text-white px-4 py-2 rounded-lg text-xs font-bold font-mono transition-all shrink-0 cursor-pointer shadow-md shadow-[#f36458]/20 disabled:opacity-50"
+            title="Reset trackers to step 1 and restart the sequence automation"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isProcessingAll ? 'animate-spin' : ''}`} />
+            <span>Restart Campaign (Re-run Sequence)</span>
+          </button>
+        </div>
+      )}
 
       {/* Visual Badge/Banner: Campaign Active & Running in Background */}
       {isCampaignRunning && (
@@ -908,6 +995,53 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Live Sending Window & Guardrails Overview Bar */}
+      {campaign && (
+        <div className="bg-[#181818] border border-[#2e2e2e] rounded-xl px-5 py-3 flex flex-wrap items-center justify-between gap-4 text-xs font-mono">
+          <div className="flex flex-wrap items-center gap-5 text-[#b9b9b9]">
+            <div className="flex items-center gap-2">
+              <Clock className="w-3.5 h-3.5 text-[#f36458]" />
+              <span className="text-[11px] text-[#797979]">WINDOW:</span>
+              <strong className="text-white bg-[#0f0f0f] px-2 py-0.5 rounded border border-[#353535]">
+                {campaign.sending_window_start || '09:00'} - {campaign.sending_window_end || '17:00'}
+              </strong>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Globe className="w-3.5 h-3.5 text-[#55beff]" />
+              <span className="text-[11px] text-[#797979]">TIMEZONE:</span>
+              <strong className="text-white bg-[#0f0f0f] px-2 py-0.5 rounded border border-[#353535]">
+                {campaign.timezone || 'Asia/Kolkata'}
+              </strong>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Calendar className="w-3.5 h-3.5 text-[#37cd84]" />
+              <span className="text-[11px] text-[#797979]">DAYS:</span>
+              <strong className="text-white bg-[#0f0f0f] px-2 py-0.5 rounded border border-[#353535]">
+                {campaign.allowed_days || 'MON,TUE,WED,THU,FRI'}
+              </strong>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-[11px] text-[#797979]">DAILY QUOTA:</span>
+              <strong className="text-white bg-[#0f0f0f] px-2 py-0.5 rounded border border-[#353535]">
+                {campaign.daily_sent_count ?? 0} / {campaign.max_daily_limit ?? 50} sent today
+              </strong>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setIsScheduleModalOpen(true)}
+            className="flex items-center gap-1.5 text-xs text-[#55beff] hover:text-white bg-[#222222] hover:bg-[#2c2c2c] px-3 py-1.5 rounded-lg border border-[#383838] transition-all cursor-pointer font-sans"
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span>Configure Timing & Limits</span>
+          </button>
+        </div>
+      )}
 
       {/* Simulation Log Console Notification (if active) */}
       {simulationLog.length > 0 && (
@@ -1380,6 +1514,15 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Campaign Sending Window & Timing Controls Modal */}
+      <CampaignScheduleModal
+        isOpen={isScheduleModalOpen}
+        onClose={() => setIsScheduleModalOpen(false)}
+        campaign={campaign}
+        onSave={handleSaveCampaignSchedule}
+        isSaving={isSavingSchedule}
+      />
 
     </div>
   );

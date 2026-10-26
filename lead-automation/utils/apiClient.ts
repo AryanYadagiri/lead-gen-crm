@@ -274,5 +274,33 @@ export const deleteCampaign = async (
   }
 };
 
+/**
+ * PUT /api/campaigns/:campaignId
+ * Updates campaign timing controls (sending windows, timezone, allowed days, daily limits, name)
+ */
+export const updateCampaignSettings = async (
+  campaignId: number,
+  settings: Partial<{
+    name: string;
+    status: string;
+    sending_window_start: string;
+    sending_window_end: string;
+    timezone: string;
+    allowed_days: string | string[];
+    max_daily_limit: number;
+  }>
+): Promise<Campaign> => {
+  console.log(`[API] Updating campaign #${campaignId} settings:`, settings);
+  try {
+    const response = await apiClient.put<Campaign>(`/api/campaigns/${campaignId}`, settings);
+    console.log('[API] Updated campaign settings in backend:', response.data);
+    return response.data;
+  } catch (err) {
+    console.error(`[API] PUT /api/campaigns/${campaignId} failed:`, err);
+    throw err;
+  }
+};
+
+
 
 
