@@ -7,6 +7,7 @@ import { EnrolledTargetsPopover } from './EnrolledTargetsPopover';
 import { CampaignScheduleModal } from './CampaignScheduleModal';
 import { 
   getActiveCampaign, 
+  createCampaign,
   getCampaignSteps, 
   syncCampaignSteps, 
   bulkEnrollLeads, 
@@ -120,6 +121,14 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
         const activeCamp = await getActiveCampaign();
         if (!isMounted) return;
         setCampaign(activeCamp);
+
+        if (!activeCamp) {
+          const reindexed = reindexSteps(DEFAULT_SEQUENCE_STEPS);
+          setSteps(reindexed);
+          setActiveStepId(reindexed[0].id);
+          setServerTrackers([]);
+          return;
+        }
 
         const serverSteps = await getCampaignSteps(activeCamp.id);
         if (!isMounted) return;
@@ -514,33 +523,58 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   };
 
   // ---------------------------------------------------------------------------
+  // Create New Campaign Handler
+  // ---------------------------------------------------------------------------
+  const [isCreatingCampaign, setIsCreatingCampaign] = useState(false);
+
+  const handleCreateNewCampaign = async () => {
+    try {
+      setIsCreatingCampaign(true);
+      setSyncFeedback('Creating new campaign in READY status...');
+      const newCamp = await createCampaign({
+        name: 'Automated Outreach Sequence Studio',
+        status: 'READY'
+      });
+      setCampaign(newCamp);
+
+      // Seed / sync sequence steps for the newly created campaign
+      const reindexed = reindexSteps(steps && steps.length > 0 ? steps : DEFAULT_SEQUENCE_STEPS);
+      try {
+        await syncCampaignSteps(newCamp.id, reindexed);
+      } catch (syncErr) {
+        console.warn('Could not sync steps for new campaign:', syncErr);
+      }
+      setSteps(reindexed);
+      setActiveStepId(reindexed[0].id);
+      setServerTrackers([]);
+
+      setSyncFeedback('New campaign created! (Status: READY). Import leads and click Launch Campaign when ready.');
+      setTimeout(() => setSyncFeedback(null), 4000);
+    } catch (err: any) {
+      console.error('Failed to create campaign:', err);
+      const errMsg = err.response?.data?.message || err.message || 'Creation failed';
+      setSyncFeedback(`Creation error: ${errMsg}`);
+      setTimeout(() => setSyncFeedback(null), 4000);
+    } finally {
+      setIsCreatingCampaign(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
   // 4. Trigger Immediate Campaign Dispatch (POST /api/campaigns/:id/process-all)
   // ---------------------------------------------------------------------------
   const currentQueueData = (queueTargets && queueTargets.length > 0) ? queueTargets : enrolledLeads;
   const activeQueueCount = currentQueueData.length;
-  const isLaunchDisabled = isProcessingAll || isCampaignRunning || isCampaignPaused || (activeQueueCount === 0 && !isCampaignCompleted);
+  const isLaunchDisabled = !campaign || isProcessingAll || isCampaignRunning || isCampaignPaused || (activeQueueCount === 0 && !isCampaignCompleted);
 
   const handleProcessCampaignImmediately = useCallback(async () => {
     // 3. Immediate console debugging tracking live active queue data
     console.log("Process Sequence clicked!", currentQueueData);
 
-    let targetCampaignId = campaign?.id;
+    const targetCampaignId = campaign?.id;
     if (!targetCampaignId) {
-      console.log("[OutreachEngineView] Campaign ID missing from state, resolving active campaign from backend...");
-      try {
-        const activeCamp = await getActiveCampaign();
-        if (activeCamp) {
-          setCampaign(activeCamp);
-          targetCampaignId = activeCamp.id;
-        }
-      } catch (e) {
-        console.error("Could not fetch active campaign:", e);
-      }
-    }
-
-    if (!targetCampaignId) {
-      console.warn("Process Sequence aborted: no campaign ID available");
-      setSyncFeedback("Campaign not ready. Please reload or check connection.");
+      console.warn("Process Sequence aborted: no active campaign");
+      setSyncFeedback('No active campaign found. Click "+ Create Campaign" to get started.');
       setTimeout(() => setSyncFeedback(null), 3500);
       return;
     }
@@ -770,7 +804,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
             <span className="text-xs font-mono text-[#37cd84] uppercase tracking-widest block">
               Campaign Workflow
             </span>
-            {campaign && (
+            {campaign ? (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="bg-[#1c1c1c] text-[#8e8e8e] text-[10px] font-mono px-2 py-0.5 rounded border border-[#2e2e2e]">
                   Campaign #{campaign.id}: {campaign.name}
@@ -800,6 +834,13 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                     : isCampaignCompleted 
                     ? 'COMPLETED' 
                     : (campaign.status?.toUpperCase() || 'READY')}
+                </span>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="bg-zinc-500/10 border border-zinc-500/30 text-zinc-400 text-[10px] font-mono px-2 py-0.5 rounded flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
+                  NO ACTIVE CAMPAIGN
                 </span>
               </div>
             )}
@@ -932,45 +973,61 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
             <span>Delete Campaign</span>
           </button>
 
-          {/* Primary Campaign Action Button (Launch Campaign) */}
-          <button
-            onClick={handleProcessCampaignImmediately}
-            disabled={isLaunchDisabled}
-            className={`h-10 inline-flex items-center gap-2 px-5 rounded-lg text-xs font-bold font-mono transition-all shadow-md cursor-pointer disabled:cursor-not-allowed shrink-0 ${
-              isCampaignRunning
-                ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 cursor-not-allowed shadow-none'
-                : isLaunchDisabled 
-                ? 'bg-[#353535] text-[#797979] cursor-not-allowed shadow-none'
-                : 'bg-[#f36458] text-white hover:bg-[#f36458]/90 shadow-[#f36458]/20'
-            }`}
-            title={
-              isCampaignRunning
-                ? 'Campaign is actively running tasks in the background.'
-                : isCampaignPaused 
-                ? 'Campaign is paused. Resume to send.' 
-                : activeQueueCount === 0 
-                ? 'No targets in queue. Import or enroll leads first.' 
-                : 'Launch sequence outreach using latest steps starting fresh from Step 1'
-            }
-          >
-            {isProcessingAll ? (
-              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            ) : isCampaignRunning ? (
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          {/* Primary Campaign Action Button (Create or Launch Campaign) */}
+          {!campaign ? (
+            <button
+              onClick={handleCreateNewCampaign}
+              disabled={isCreatingCampaign}
+              className="h-10 inline-flex items-center gap-2 px-5 rounded-lg text-xs font-bold font-mono transition-all shadow-md bg-[#37cd84] text-black hover:bg-[#37cd84]/90 shadow-[#37cd84]/20 cursor-pointer disabled:cursor-not-allowed shrink-0"
+              title="Create a new outreach campaign in READY state"
+            >
+              {isCreatingCampaign ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Plus className="w-3.5 h-3.5" />
+              )}
+              <span>{isCreatingCampaign ? 'Creating...' : '+ Create Campaign'}</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleProcessCampaignImmediately}
+              disabled={isLaunchDisabled}
+              className={`h-10 inline-flex items-center gap-2 px-5 rounded-lg text-xs font-bold font-mono transition-all shadow-md cursor-pointer disabled:cursor-not-allowed shrink-0 ${
+                isCampaignRunning
+                  ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 cursor-not-allowed shadow-none'
+                  : isLaunchDisabled 
+                  ? 'bg-[#353535] text-[#797979] cursor-not-allowed shadow-none'
+                  : 'bg-[#f36458] text-white hover:bg-[#f36458]/90 shadow-[#f36458]/20'
+              }`}
+              title={
+                isCampaignRunning
+                  ? 'Campaign is actively running tasks in the background.'
+                  : isCampaignPaused 
+                  ? 'Campaign is paused. Resume to send.' 
+                  : activeQueueCount === 0 
+                  ? 'No targets in queue. Import or enroll leads first.' 
+                  : 'Launch sequence outreach using latest steps starting fresh from Step 1'
+              }
+            >
+              {isProcessingAll ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : isCampaignRunning ? (
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {isProcessingAll 
+                  ? 'Launching...' 
+                  : isCampaignRunning 
+                  ? 'Campaign Running' 
+                  : 'Launch Campaign'}
               </span>
-            ) : (
-              <Send className="w-3.5 h-3.5" />
-            )}
-            <span>
-              {isProcessingAll 
-                ? 'Launching...' 
-                : isCampaignRunning 
-                ? 'Campaign Running' 
-                : 'Launch Campaign'}
-            </span>
-          </button>
+            </button>
+          )}
         </div>
       </div>
 

@@ -11,6 +11,7 @@ import cc.miab.lead_generation.campaign.dto.TestRunRequest;
 import cc.miab.lead_generation.campaign.dto.TestRunResponse;
 import cc.miab.lead_generation.campaign.entity.SequenceStep;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -48,8 +49,10 @@ public class EmailCampaignController {
      * Resolves the active / default campaign for the frontend.
      */
     @GetMapping("/active")
-    public CampaignResponse getActiveCampaign() {
-        return CampaignResponse.from(emailCampaignService.getOrCreateDefaultCampaign());
+    public ResponseEntity<CampaignResponse> getActiveCampaign() {
+        return emailCampaignService.findActiveCampaign()
+                .map(c -> ResponseEntity.ok(CampaignResponse.from(c)))
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 
     @PostMapping
@@ -125,13 +128,19 @@ public class EmailCampaignController {
     @ResponseStatus(HttpStatus.OK)
     public Map<String, Object> deleteCampaign(@PathVariable(required = false) Long campaignId) {
         if (campaignId == null) {
-            campaignId = emailCampaignService.getOrCreateDefaultCampaign().getId();
+            List<Campaign> all = emailCampaignService.getAllCampaigns(null);
+            if (!all.isEmpty()) {
+                campaignId = all.get(0).getId();
+            }
         }
-        emailCampaignService.deleteCampaign(campaignId);
+        if (campaignId != null) {
+            emailCampaignService.deleteCampaign(campaignId);
+        } else {
+            emailCampaignService.deleteAllCampaigns();
+        }
         return Map.of(
                 "status", "success",
-                "message", "Campaign " + campaignId + " and all sequence steps, targets, and queues permanently deleted.",
-                "campaignId", campaignId
+                "message", "Campaign and all sequence steps, targets, and queues permanently deleted."
         );
     }
 

@@ -86,6 +86,16 @@ public class EmailCampaignService {
         }
     }
 
+    @Transactional(readOnly = true)
+    public Optional<Campaign> findActiveCampaign() {
+        List<Campaign> campaigns = campaignRepository.findAll();
+        if (campaigns.isEmpty()) {
+            return Optional.empty();
+        }
+        checkAndCompleteCampaignIfDone(campaigns.get(0).getId());
+        return campaignRepository.findById(campaigns.get(0).getId());
+    }
+
     @Transactional
     public Campaign getOrCreateDefaultCampaign() {
         List<Campaign> campaigns = campaignRepository.findAll();
@@ -432,13 +442,8 @@ public class EmailCampaignService {
             Campaign campaign = campaignOpt.get();
             String status = campaign.getStatus() != null ? campaign.getStatus().trim().toUpperCase() : "";
 
-            if ("PAUSED".equals(status)) {
-                logger.info("Campaign ID {} is PAUSED. Skipping scheduled outreach.", campaignId);
-                continue;
-            }
-
-            if ("COMPLETED".equals(status) || "FINISHED".equals(status)) {
-                logger.info("Campaign ID {} is already COMPLETED. Skipping scheduled outreach.", campaignId);
+            if (!"RUNNING".equals(status) && !"PROCESSING".equals(status)) {
+                logger.info("Campaign ID {} is in state '{}' (not RUNNING). Skipping scheduled outreach.", campaignId, status);
                 continue;
             }
 
@@ -634,9 +639,18 @@ public class EmailCampaignService {
             return;
         }
 
-        if (isCampaignPaused(tracker.getCampaignId())) {
-            logger.info("Campaign ID {} is PAUSED. Halting dispatch for tracker ID {}.",
+        Optional<Campaign> campaignOpt = campaignRepository.findById(tracker.getCampaignId());
+        if (campaignOpt.isEmpty()) {
+            logger.warn("Campaign ID {} no longer exists. Halting dispatch for tracker ID {}.",
                     tracker.getCampaignId(), tracker.getId());
+            return;
+        }
+
+        Campaign campaign = campaignOpt.get();
+        String currentStatus = campaign.getStatus() != null ? campaign.getStatus().trim().toUpperCase() : "";
+        if (!"RUNNING".equals(currentStatus) && !"PROCESSING".equals(currentStatus)) {
+            logger.info("Campaign ID {} is in state '{}' (not RUNNING). Halting dispatch for tracker ID {}.",
+                    tracker.getCampaignId(), currentStatus, tracker.getId());
             return;
         }
 
@@ -680,6 +694,14 @@ public class EmailCampaignService {
                         return;
                     }
 
+                    // Re-check campaign existence and status right before network dispatch in case campaign was paused or deleted during verification
+                    Optional<Campaign> freshCampaignOpt = campaignRepository.findById(tracker.getCampaignId());
+                    if (freshCampaignOpt.isEmpty() || (!"RUNNING".equalsIgnoreCase(freshCampaignOpt.get().getStatus()) && !"PROCESSING".equalsIgnoreCase(freshCampaignOpt.get().getStatus()))) {
+                        logger.info("Campaign ID {} is no longer RUNNING right before email dispatch. Halting send for tracker ID {}.",
+                                tracker.getCampaignId(), tracker.getId());
+                        return;
+                    }
+
                     emailSenderService.sendEmail(tracker.getEmail(), parsedSubject, parsedBody);
                     recordEmailDispatched(tracker.getCampaignId());
                     logger.info("Dispatched step {} email for campaign {} to {}",
@@ -705,7 +727,7 @@ public class EmailCampaignService {
             int delay = Math.max(0, nextStep.getDelayDays());
             LocalDateTime actualExecutionTime = LocalDateTime.now();
 
-            Campaign campaign = getCampaign(tracker.getCampaignId());
+            campaign = getCampaign(tracker.getCampaignId());
             ZoneId zoneId = resolveCampaignZoneId(campaign);
             ZonedDateTime nowInZone = ZonedDateTime.now(zoneId);
             LocalTime windowStart = parseTimeOrDefault(campaign.getSendingWindowStart(), LocalTime.of(9, 0));
@@ -713,7 +735,7 @@ public class EmailCampaignService {
             if (delay == 0) {
                 // Rule: Respect Intentional 0-Day Delays
                 // If a user configures a step with a 0 day delay, allow multiple emails to send to the same lead in a single day (subject to daily quotas and sending windows).
-                boolean running = !isCampaignPaused(campaign.getId());
+                boolean running = "RUNNING".equalsIgnoreCase(campaign.getStatus()) || "PROCESSING".equalsIgnoreCase(campaign.getStatus());
                 boolean allowedDay = isAllowedDay(campaign, nowInZone);
                 boolean withinWindow = isWithinSendingWindow(campaign, nowInZone);
                 boolean underQuota = isUnderChannelDailyLimitAndResetIfNewDay(campaign, nextChannel, nowInZone);
@@ -1074,15 +1096,21 @@ public class EmailCampaignService {
 
     @Transactional
     public Campaign createCampaign(String name, String status) {
-        String resolvedStatus = (status == null || status.isBlank()) ? "ACTIVE" : status;
+        String resolvedStatus = (status == null || status.isBlank()) ? "READY" : status;
+        if ("ACTIVE".equalsIgnoreCase(resolvedStatus)) {
+            resolvedStatus = "RUNNING";
+        }
         Campaign saved = campaignRepository.save(new Campaign(name, resolvedStatus));
-        logger.info("Created campaign ID {} with name '{}'", saved.getId(), saved.getName());
+        logger.info("Created campaign ID {} with name '{}', status '{}'", saved.getId(), saved.getName(), saved.getStatus());
         return saved;
     }
 
     @Transactional
     public Campaign createCampaign(CampaignRequest request) {
-        String resolvedStatus = (request.status() == null || request.status().isBlank()) ? "ACTIVE" : request.status();
+        String resolvedStatus = (request.status() == null || request.status().isBlank()) ? "READY" : request.status();
+        if ("ACTIVE".equalsIgnoreCase(resolvedStatus)) {
+            resolvedStatus = "RUNNING";
+        }
         Campaign campaign = new Campaign(
                 request.name() != null ? request.name() : "Automated Outreach Sequence Studio",
                 resolvedStatus,
@@ -1188,7 +1216,31 @@ public class EmailCampaignService {
             campaignRepository.flush();
         }
 
+        // 5. If no campaigns remain, ensure complete purge of all steps and trackers
+        if (campaignRepository.count() == 0) {
+            sequenceStepRepository.deleteAll();
+            sequenceStepRepository.flush();
+            trackerRepository.deleteAll();
+            trackerRepository.flush();
+            leadsRepository.deleteAll();
+            leadsRepository.flush();
+        }
+
         logger.info("Successfully completed cascading deletion for campaign ID {}", campaignId);
+    }
+
+    @Transactional
+    public void deleteAllCampaigns() {
+        logger.info("Permanently wiping all campaigns, sequence steps, targets, and queues...");
+        sequenceStepRepository.deleteAll();
+        sequenceStepRepository.flush();
+        trackerRepository.deleteAll();
+        trackerRepository.flush();
+        leadsRepository.deleteAll();
+        leadsRepository.flush();
+        campaignRepository.deleteAll();
+        campaignRepository.flush();
+        logger.info("Successfully completed wipe of all campaigns and outreach data.");
     }
 
     @Transactional

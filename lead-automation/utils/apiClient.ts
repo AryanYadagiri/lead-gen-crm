@@ -42,10 +42,33 @@ export const sendEmail = async (emailData: { to: string; subject: string; body: 
 
 /**
  * GET /api/campaigns/active
- * Gets the active or bootstrapped default campaign
+ * Gets the active campaign, or null if no campaign exists
  */
-export const getActiveCampaign = async (): Promise<Campaign> => {
-  const response = await apiClient.get<Campaign>('/api/campaigns/active');
+export const getActiveCampaign = async (): Promise<Campaign | null> => {
+  try {
+    const response = await apiClient.get<Campaign>('/api/campaigns/active');
+    if (response.status === 204 || !response.data || !response.data.id) {
+      return null;
+    }
+    return response.data;
+  } catch (error: any) {
+    if (error?.response?.status === 204 || error?.response?.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+};
+
+/**
+ * POST /api/campaigns
+ * Creates a new outreach campaign in READY state
+ */
+export const createCampaign = async (payload?: { name?: string; description?: string; status?: string }): Promise<Campaign> => {
+  const response = await apiClient.post<Campaign>('/api/campaigns', {
+    name: payload?.name || 'Automated Outreach Sequence Studio',
+    description: payload?.description || 'Multi-step outbound email outreach engine',
+    status: payload?.status || 'READY',
+  });
   return response.data;
 };
 
