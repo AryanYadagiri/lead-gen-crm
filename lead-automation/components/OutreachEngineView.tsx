@@ -377,7 +377,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   // Pause / Resume Campaign Status (PUT /api/campaign/status)
   // ---------------------------------------------------------------------------
   const handleTogglePauseResume = async () => {
-    if (!campaign) return;
+    if (!campaign || isCampaignCompleted) return;
     const isCurrentlyPaused = campaign.status?.toUpperCase() === 'PAUSED';
     const nextStatus: 'RUNNING' | 'PAUSED' = isCurrentlyPaused ? 'RUNNING' : 'PAUSED';
 
@@ -406,7 +406,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   // Cascading Wipe / Delete Campaign (DELETE /api/campaign)
   // ---------------------------------------------------------------------------
   const handleConfirmDeleteCampaign = async () => {
-    if (!campaign) return;
+    if (!campaign || isCampaignCompleted) return;
 
     try {
       setIsDeletingCampaign(true);
@@ -800,20 +800,28 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
           {/* Pause / Resume Campaign Button / Toggle */}
           <button
             onClick={handleTogglePauseResume}
-            disabled={isUpdatingStatus || !campaign}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-[4px] text-xs font-mono transition-all cursor-pointer disabled:opacity-50 ${
+            disabled={isUpdatingStatus || !campaign || isCampaignCompleted}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-[4px] text-xs font-mono transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
               isCampaignPaused
-                ? 'bg-amber-500/15 border border-amber-500/60 text-amber-300 hover:bg-amber-500/25 shadow-sm shadow-amber-500/20'
-                : 'bg-[#212121] border border-[#353535] hover:border-amber-500/40 text-white hover:text-amber-400'
+                ? 'bg-amber-500/15 border border-amber-500/60 text-amber-300 hover:bg-amber-500/25 shadow-sm shadow-amber-500/20 cursor-pointer'
+                : isCampaignCompleted
+                ? 'bg-[#1a1a1a] border border-[#2b2b2b] text-[#555555]'
+                : 'bg-[#212121] border border-[#353535] hover:border-amber-500/40 text-white hover:text-amber-400 cursor-pointer'
             }`}
-            title={isCampaignPaused ? 'Resume campaign outreach dispatching' : 'Pause campaign outreach dispatching'}
+            title={
+              isCampaignCompleted
+                ? 'Campaign is completed. All sequence steps have finished, so pause is disabled.'
+                : isCampaignPaused 
+                ? 'Resume campaign outreach dispatching' 
+                : 'Pause campaign outreach dispatching'
+            }
           >
             {isUpdatingStatus ? (
               <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
             ) : isCampaignPaused ? (
               <Play className="w-3.5 h-3.5 text-amber-400 fill-current" />
             ) : (
-              <Pause className="w-3.5 h-3.5 text-amber-400" />
+              <Pause className={`w-3.5 h-3.5 ${isCampaignCompleted ? 'text-[#555555]' : 'text-amber-400'}`} />
             )}
             <span>{isUpdatingStatus ? 'Updating...' : isCampaignPaused ? 'Resume Campaign' : 'Pause Campaign'}</span>
           </button>
@@ -821,11 +829,19 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
           {/* Delete Campaign Button */}
           <button
             onClick={() => setIsDeleteDialogOpen(true)}
-            disabled={!campaign || isDeletingCampaign}
-            className="flex items-center gap-2 bg-red-950/20 border border-red-500/30 hover:border-red-500/60 text-red-400 hover:text-red-300 hover:bg-red-950/40 px-3.5 py-2 rounded-[4px] text-xs font-mono transition-all cursor-pointer disabled:opacity-50"
-            title="Permanently delete campaign and wipe sequence data"
+            disabled={!campaign || isDeletingCampaign || isCampaignCompleted}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-[4px] text-xs font-mono transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+              isCampaignCompleted
+                ? 'bg-[#1a1a1a] border border-[#2b2b2b] text-[#555555]'
+                : 'bg-red-950/20 border border-red-500/30 hover:border-red-500/60 text-red-400 hover:text-red-300 hover:bg-red-950/40 cursor-pointer'
+            }`}
+            title={
+              isCampaignCompleted
+                ? 'Campaign is completed. Deletion is disabled to preserve historical sequence logs.'
+                : 'Permanently delete campaign and wipe sequence data'
+            }
           >
-            <Trash2 className="w-3.5 h-3.5 text-red-400" />
+            <Trash2 className={`w-3.5 h-3.5 ${isCampaignCompleted ? 'text-[#555555]' : 'text-red-400'}`} />
             <span>Delete Campaign</span>
           </button>
 
