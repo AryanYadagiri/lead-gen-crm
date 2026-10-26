@@ -94,6 +94,14 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     try {
       const trackers = await getCampaignTrackers(campaignId);
       setServerTrackers(trackers);
+      
+      // If all trackers have finished and none are pending, refresh campaign status to auto-reflect completion
+      if (trackers.length > 0 && trackers.every((t) => t.status !== 'PENDING')) {
+        try {
+          const freshCamp = await getActiveCampaign();
+          if (freshCamp) setCampaign(freshCamp);
+        } catch {}
+      }
       return trackers;
     } catch (err) {
       console.warn('Could not fetch campaign trackers from backend:', err);
@@ -346,9 +354,67 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   };
 
   const campaignStatus = campaign?.status?.toUpperCase() || '';
-  const isCampaignRunning = campaignStatus === 'RUNNING' || campaignStatus === 'PROCESSING' || campaignStatus === 'ACTIVE';
-  const isCampaignPaused = campaignStatus === 'PAUSED';
-  const isCampaignCompleted = campaignStatus === 'COMPLETED' || campaignStatus === 'FINISHED';
+  const allTrackersDone = serverTrackers.length > 0 && serverTrackers.every((t) => t.status !== 'PENDING');
+  const isCampaignCompleted = campaignStatus === 'COMPLETED' || campaignStatus === 'FINISHED' || (allTrackersDone && !isProcessingAll);
+  const isCampaignRunning = !isCampaignCompleted && (campaignStatus === 'RUNNING' || campaignStatus === 'PROCESSING' || campaignStatus === 'ACTIVE');
+  const isCampaignPaused = !isCampaignCompleted && campaignStatus === 'PAUSED';
+
+  // ---------------------------------------------------------------------------
+  // Live Status Polling: Keep UI synced in real-time without page refresh
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!campaign?.id || (!isCampaignRunning && !isProcessingAll)) return;
+
+    let isMounted = true;
+    const intervalId = setInterval(async () => {
+      try {
+        const freshCamp = await getActiveCampaign();
+        if (!isMounted) return;
+        if (freshCamp) setCampaign(freshCamp);
+
+        const updatedTrackers = await getCampaignTrackers(campaign.id);
+        if (!isMounted) return;
+        setServerTrackers(updatedTrackers);
+
+        // Auto-complete check: if all trackers finished, pull final campaign state
+        if (updatedTrackers.length > 0 && updatedTrackers.every((t) => t.status !== 'PENDING')) {
+          if (freshCamp?.status !== 'COMPLETED') {
+            const recheck = await getActiveCampaign();
+            if (isMounted && recheck) setCampaign(recheck);
+          }
+          if (onRefreshQueue) onRefreshQueue();
+        }
+      } catch (pollErr) {
+        console.warn('[OutreachEngineView] Live polling status error:', pollErr);
+      }
+    }, 2000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+  }, [campaign?.id, isCampaignRunning, isProcessingAll, onRefreshQueue]);
+
+  // Re-sync campaign and trackers when browser window or tab regains focus
+  useEffect(() => {
+    const handleFocusSync = async () => {
+      if (document.visibilityState === 'visible' && campaign?.id) {
+        try {
+          const freshCamp = await getActiveCampaign();
+          if (freshCamp) setCampaign(freshCamp);
+          await refreshEnrolledTrackers(campaign.id);
+          if (onRefreshQueue) onRefreshQueue();
+        } catch {}
+      }
+    };
+
+    window.addEventListener('focus', handleFocusSync);
+    document.addEventListener('visibilitychange', handleFocusSync);
+    return () => {
+      window.removeEventListener('focus', handleFocusSync);
+      document.removeEventListener('visibilitychange', handleFocusSync);
+    };
+  }, [campaign?.id, refreshEnrolledTrackers, onRefreshQueue]);
 
   // ---------------------------------------------------------------------------
   // Save Campaign Timing Windows & Daily Limits (PUT /api/campaigns/:id)
@@ -517,6 +583,9 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
       const result = await processAllCampaignTrackers(targetCampaignId);
       setIsProcessingAll(false);
 
+      // Reset serverTrackers locally if re-running sequence so completion state transitions cleanly
+      setServerTrackers(prev => prev.map(t => ({ ...t, status: 'PENDING' })));
+
       // PART 2.4: Synchronous update on click - immediately flip local campaign state without refresh
       setCampaign(prev => prev ? { ...prev, status: 'RUNNING' } : null);
 
@@ -531,11 +600,20 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
         `[SUCCESS] Emails & touchpoints dispatched without waiting for scheduled delay.`
       ]);
 
-      // Re-fetch trackers to display updated progress/status
-      setTimeout(() => {
-        refreshEnrolledTrackers(targetCampaignId);
-        if (onRefreshQueue) onRefreshQueue();
-      }, 1000);
+      // Staggered status & tracker re-checks to catch fast-completing dispatches without user reload
+      const checkDelays = [1000, 2500, 4500, 7000, 10000];
+      checkDelays.forEach((delay) => {
+        setTimeout(async () => {
+          try {
+            const freshCamp = await getActiveCampaign();
+            if (freshCamp) setCampaign(freshCamp);
+            await refreshEnrolledTrackers(targetCampaignId);
+            if (onRefreshQueue) onRefreshQueue();
+          } catch (e) {
+            console.warn('Post-dispatch status check error:', e);
+          }
+        }, delay);
+      });
 
       setTimeout(() => setSyncFeedback(null), 5000);
     } catch (err: any) {
