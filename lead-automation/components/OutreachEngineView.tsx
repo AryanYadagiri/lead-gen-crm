@@ -23,7 +23,7 @@ import {
   Send, CheckCheck, Smartphone, Info, Play, CheckCircle2, ShieldAlert,
   ChevronRight, Users, Settings2, Code, Eye, RefreshCw, Server, Check, 
   AlertCircle, FileSpreadsheet, Upload, Zap, Clock, Pause, AlertTriangle,
-  Calendar, Globe, Sliders, ShieldCheck
+  Calendar, Globe, Sliders, ShieldCheck, RotateCcw
 } from 'lucide-react';
 
 interface OutreachEngineViewProps {
@@ -812,12 +812,12 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
         </div>
 
         {/* Sequence Metrics Quick Bar & Actions */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
 
           {/* Excel / CSV Lead Import Action */}
-          <label className="flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#37cd84] text-white hover:text-[#37cd84] px-3.5 py-2 rounded-[4px] text-xs font-mono cursor-pointer transition-all">
+          <label className="h-9 inline-flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#37cd84] text-white hover:text-[#37cd84] px-4 rounded-lg text-xs font-mono cursor-pointer transition-all shrink-0">
             <FileSpreadsheet className={`w-3.5 h-3.5 text-[#37cd84] ${isUploadingFile ? 'animate-bounce' : ''}`} />
-            <span>{isUploadingFile ? 'Parsing...' : 'Import Leads (Excel/CSV)'}</span>
+            <span>{isUploadingFile ? 'Importing...' : 'Import Leads'}</span>
             <input
               ref={fileInputRef}
               type="file"
@@ -829,7 +829,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
           </label>
 
           {/* Enrolled Targets Queue Mini-Dashboard Popover Window */}
-          <div className="relative">
+          <div className="relative shrink-0">
             <button
               onClick={() => {
                 const nextState = !isPopoverOpen;
@@ -838,10 +838,10 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                   onRefreshQueue();
                 }
               }}
-              className="flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#b9b9b9] px-3.5 py-2 rounded-[4px] text-xs font-mono text-white cursor-pointer transition-all"
+              className="h-9 inline-flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#b9b9b9] px-4 rounded-lg text-xs font-mono text-white cursor-pointer transition-all shrink-0"
             >
               <Users className="w-4 h-4 text-[#f36458]" />
-              <span>Enrolled Targets: <strong className="text-[#37cd84]">{queueTargets ? queueTargets.length : enrolledLeads.length} Leads</strong></span>
+              <span><strong className="text-[#37cd84]">{queueTargets ? queueTargets.length : enrolledLeads.length}</strong> Leads Enrolled</span>
             </button>
 
             {onClearQueue && onDeleteQueueTarget && (
@@ -863,7 +863,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
           {/* Sending Window & Timing Controls Button */}
           <button
             onClick={() => setIsScheduleModalOpen(true)}
-            className="flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#55beff] px-3.5 py-2 rounded-[4px] text-xs font-mono text-white hover:text-[#55beff] cursor-pointer transition-all"
+            className="h-9 inline-flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#55beff] px-4 rounded-lg text-xs font-mono text-white hover:text-[#55beff] cursor-pointer transition-all shrink-0"
             title="Configure sending windows, business hours, timezone, and daily limits"
           >
             <Clock className="w-4 h-4 text-[#55beff]" />
@@ -879,7 +879,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
           <button
             onClick={handleTogglePauseResume}
             disabled={isUpdatingStatus || !campaign || isCampaignCompleted}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-[4px] text-xs font-mono transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`h-9 inline-flex items-center gap-2 px-4 rounded-lg text-xs font-mono transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0 ${
               isCampaignPaused
                 ? 'bg-amber-500/15 border border-amber-500/60 text-amber-300 hover:bg-amber-500/25 shadow-sm shadow-amber-500/20 cursor-pointer'
                 : isCampaignCompleted
@@ -908,7 +908,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
           <button
             onClick={() => setIsDeleteDialogOpen(true)}
             disabled={!campaign || isDeletingCampaign || isCampaignCompleted}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-[4px] text-xs font-mono transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`h-9 inline-flex items-center gap-2 px-4 rounded-lg text-xs font-mono transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0 ${
               isCampaignCompleted
                 ? 'bg-[#1a1a1a] border border-[#2b2b2b] text-[#555555]'
                 : 'bg-red-950/20 border border-red-500/30 hover:border-red-500/60 text-red-400 hover:text-red-300 hover:bg-red-950/40 cursor-pointer'
@@ -923,11 +923,11 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
             <span>Delete Campaign</span>
           </button>
 
-          {/* Run Campaign / Process Sequence Button (Dispatches immediately without waiting for cron) */}
+          {/* Primary Campaign Action Button (Run / Restart Campaign) */}
           <button
             onClick={handleProcessCampaignImmediately}
             disabled={isLaunchDisabled}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all shadow-lg cursor-pointer disabled:cursor-not-allowed ${
+            className={`h-9 inline-flex items-center gap-2 px-4 rounded-lg text-xs font-bold font-mono transition-all shadow-md cursor-pointer disabled:cursor-not-allowed shrink-0 ${
               isCampaignRunning
                 ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 cursor-not-allowed shadow-none'
                 : isLaunchDisabled 
@@ -941,7 +941,9 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                 ? 'Campaign is paused. Resume to send.' 
                 : activeQueueCount === 0 
                 ? 'No targets in queue. Import or enroll leads first.' 
-                : 'Immediately sends campaign emails to all enrolled leads without waiting for schedule'
+                : isCampaignCompleted
+                ? 'Reset enrolled leads to step 1 and restart campaign outreach'
+                : 'Start sending campaign emails to enrolled leads'
             }
           >
             {isProcessingAll ? (
@@ -951,6 +953,8 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
+            ) : isCampaignCompleted ? (
+              <RotateCcw className="w-3.5 h-3.5" />
             ) : (
               <Send className="w-3.5 h-3.5" />
             )}
@@ -958,10 +962,10 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
               {isProcessingAll 
                 ? 'Dispatching...' 
                 : isCampaignRunning 
-                ? 'Campaign Active & Processing' 
+                ? 'Campaign Running' 
                 : isCampaignCompleted
-                ? 'Restart Sequence (Send Again)'
-                : 'Process Sequence (Send Now)'}
+                ? 'Restart Campaign'
+                : 'Run Campaign'}
             </span>
           </button>
         </div>
@@ -969,8 +973,8 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
 
       {/* Visual Badge/Banner: Campaign Completed */}
       {isCampaignCompleted && (
-        <div className="bg-blue-950/20 border border-blue-500/30 text-blue-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in duration-200 shadow-md shadow-blue-950/10">
-          <div className="flex items-center gap-3">
+        <div className="bg-blue-950/20 border border-blue-500/30 text-blue-200 rounded-xl p-4 flex items-center justify-between gap-4 animate-in fade-in duration-200 shadow-md shadow-blue-950/10">
+          <div className="flex items-center gap-3.5">
             <div className="w-9 h-9 rounded-lg bg-blue-500/20 flex items-center justify-center shrink-0 border border-blue-500/30 text-blue-400">
               <CheckCircle2 className="w-5 h-5" />
             </div>
@@ -982,19 +986,10 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                 </span>
               </div>
               <div className="text-xs text-blue-200/70 font-mono mt-0.5">
-                All multi-step sequence emails & touchpoints have been processed for enrolled targets. Zero pending emails remaining.
+                All steps in this sequence have been successfully delivered to enrolled targets. Zero pending emails remaining.
               </div>
             </div>
           </div>
-          <button
-            onClick={handleProcessCampaignImmediately}
-            disabled={isProcessingAll}
-            className="flex items-center gap-2 bg-[#f36458] hover:bg-[#f36458]/90 text-white px-4 py-2 rounded-lg text-xs font-bold font-mono transition-all shrink-0 cursor-pointer shadow-md shadow-[#f36458]/20 disabled:opacity-50"
-            title="Reset trackers to step 1 and restart the sequence automation"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isProcessingAll ? 'animate-spin' : ''}`} />
-            <span>Restart Campaign (Re-run Sequence)</span>
-          </button>
         </div>
       )}
 
@@ -1054,11 +1049,11 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
       )}
 
       {/* Target Lead Selector for Live Preview */}
-      <div className="bg-[#212121] border border-[#353535] rounded-xl p-3 px-5 flex flex-wrap items-center justify-between gap-4 min-h-[50px]">
+      <div className="bg-[#181818] border border-[#2e2e2e] rounded-xl px-5 py-3 flex flex-wrap items-center justify-between gap-4 min-h-[54px] shadow-sm">
         <div className="flex items-center gap-3">
-          <span className="text-xs font-mono text-[#797979]">LIVE CONTEXT TARGET:</span>
+          <span className="text-[11px] font-mono tracking-wider text-[#797979] font-medium">LIVE CONTEXT TARGET:</span>
           {currentSampleLead ? (
-            <div className="flex items-center gap-2 bg-[#0b0b0b] border border-[#353535] px-3 py-1 rounded-full text-xs text-white">
+            <div className="h-8 flex items-center gap-2 bg-[#0e0e0e] border border-[#353535] px-3 rounded-lg text-xs text-white">
               <div className="w-5 h-5 rounded-full bg-[#0052ef] text-white flex items-center justify-center font-bold text-[10px] shrink-0 font-mono">
                 {(currentSampleLead.name || 'L').charAt(0).toUpperCase()}
               </div>
@@ -1078,7 +1073,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
             <select
               value={activeLeadPreviewIndex}
               onChange={(e) => setActiveLeadPreviewIndex(Number(e.target.value))}
-              className="bg-[#0b0b0b] text-white border border-[#353535] rounded px-2 py-1 text-xs focus:outline-none"
+              className="h-8 bg-[#0e0e0e] text-white border border-[#353535] hover:border-[#555555] rounded-lg px-3 py-1 text-xs font-mono focus:outline-none focus:border-[#55beff] cursor-pointer transition-colors shadow-inner"
             >
               {enrolledLeads.map((l, idx) => (
                 <option key={l.id ? `${l.id}-${idx}` : idx} value={idx}>
