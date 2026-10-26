@@ -568,7 +568,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
 
     try {
       setIsProcessingAll(true);
-      setSyncFeedback(`Syncing sequence steps and dispatching to ${currentQueueData.length} enrolled lead(s)...`);
+      setSyncFeedback(`Syncing latest sequence flow and launching campaign for ${currentQueueData.length} lead(s)...`);
       
       // Ensure backend has the latest sequence steps as edited in the UI
       try {
@@ -584,20 +584,20 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
       setIsProcessingAll(false);
 
       // Reset serverTrackers locally if re-running sequence so completion state transitions cleanly
-      setServerTrackers(prev => prev.map(t => ({ ...t, status: 'PENDING' })));
+      setServerTrackers(prev => prev.map(t => ({ ...t, status: 'PENDING', currentStepOrder: 1 })));
 
       // PART 2.4: Synchronous update on click - immediately flip local campaign state without refresh
       setCampaign(prev => prev ? { ...prev, status: 'RUNNING' } : null);
 
-      setSyncFeedback(result.message || 'Sequence dispatched immediately!');
+      setSyncFeedback(result.message || 'Campaign launched! Outreach sequence active.');
       console.log('[OutreachEngineView] Process sequence response:', result);
 
       // Populate execution message into the console
       setSimulationLog((prev) => [
         ...prev,
-        `[${new Date().toLocaleTimeString()}] Immediate Outreach Dispatch executed for Campaign #${targetCampaignId}`,
-        `[${new Date().toLocaleTimeString()}] Dispatched outreach for ${result.processedTrackers ?? currentQueueData.length} lead(s).`,
-        `[SUCCESS] Emails & touchpoints dispatched without waiting for scheduled delay.`
+        `[${new Date().toLocaleTimeString()}] Campaign Launch executed for Campaign #${targetCampaignId}`,
+        `[${new Date().toLocaleTimeString()}] Reset trackers to Step 1 & actively dispatching outreach for ${result.processedTrackers ?? currentQueueData.length} lead(s).`,
+        `[SUCCESS] Running latest sequence steps from Step 1.`
       ]);
 
       // Staggered status & tracker re-checks to catch fast-completing dispatches without user reload
@@ -927,7 +927,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
             <span>Delete Campaign</span>
           </button>
 
-          {/* Primary Campaign Action Button (Run / Restart Campaign) */}
+          {/* Primary Campaign Action Button (Launch Campaign) */}
           <button
             onClick={handleProcessCampaignImmediately}
             disabled={isLaunchDisabled}
@@ -945,9 +945,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                 ? 'Campaign is paused. Resume to send.' 
                 : activeQueueCount === 0 
                 ? 'No targets in queue. Import or enroll leads first.' 
-                : isCampaignCompleted
-                ? 'Reset enrolled leads to step 1 and restart campaign outreach'
-                : 'Start sending campaign emails to enrolled leads'
+                : 'Launch sequence outreach using latest steps starting fresh from Step 1'
             }
           >
             {isProcessingAll ? (
@@ -957,19 +955,15 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-            ) : isCampaignCompleted ? (
-              <RotateCcw className="w-3.5 h-3.5" />
             ) : (
               <Send className="w-3.5 h-3.5" />
             )}
             <span>
               {isProcessingAll 
-                ? 'Dispatching...' 
+                ? 'Launching...' 
                 : isCampaignRunning 
                 ? 'Campaign Running' 
-                : isCampaignCompleted
-                ? 'Restart Campaign'
-                : 'Run Campaign'}
+                : 'Launch Campaign'}
             </span>
           </button>
         </div>

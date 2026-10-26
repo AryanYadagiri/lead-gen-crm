@@ -146,4 +146,39 @@ class EmailCampaignServiceTest {
         campaign.setDailySentCount(2);
         assertFalse(service.isUnderDailyLimitAndResetIfNewDay(campaign, today));
     }
+
+    @Test
+    void testProcessCampaignTrackersImmediately_FreshnessGuarantee_ResetsTrackersAndSetsRunning() {
+        Long campaignId = 1L;
+        Campaign campaign = new Campaign("Test Campaign", "COMPLETED");
+        campaign.setId(campaignId);
+
+        when(campaignRepository.findById(campaignId)).thenReturn(Optional.of(campaign));
+        when(sequenceStepRepository.findByCampaignIdOrderByStepOrderAsc(campaignId)).thenReturn(java.util.List.of(
+                new cc.miab.lead_generation.campaign.entity.SequenceStep(campaignId, 1, "email", "Step 1", 0, "Subject", "Body", true)
+        ));
+
+        cc.miab.lead_generation.campaign.entity.LeadSequenceTracker tracker =
+                new cc.miab.lead_generation.campaign.entity.LeadSequenceTracker();
+        tracker.setId(101L);
+        tracker.setLeadId("lead-1");
+        tracker.setEmail("test@example.com");
+        tracker.setCampaignId(campaignId);
+        tracker.setStatus("COMPLETED");
+        tracker.setCurrentStepOrder(3);
+
+        when(trackerRepository.findByCampaignId(campaignId)).thenReturn(new java.util.ArrayList<>(java.util.List.of(tracker)));
+        when(leadsRepository.findAll()).thenReturn(java.util.List.of());
+
+        int count = service.processCampaignTrackersImmediately(campaignId);
+
+        assertEquals(1, count);
+        assertEquals("RUNNING", campaign.getStatus());
+        assertEquals("PENDING", tracker.getStatus());
+        assertEquals(1, tracker.getCurrentStepOrder());
+
+        verify(campaignRepository).saveAndFlush(campaign);
+        verify(sequenceStepRepository).findByCampaignIdOrderByStepOrderAsc(campaignId);
+        verify(trackerRepository).saveAllAndFlush(any());
+    }
 }

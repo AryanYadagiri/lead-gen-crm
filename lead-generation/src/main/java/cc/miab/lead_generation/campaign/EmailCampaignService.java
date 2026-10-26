@@ -415,6 +415,14 @@ public class EmailCampaignService {
         campaignRepository.saveAndFlush(campaign);
         logger.info("Persisted campaign ID {} status to RUNNING in database to lock simultaneous execution.", campaignId);
 
+        // Freshness Guarantee 1: Fetch latest sequence steps linked to the campaign in database
+        List<SequenceStep> currentSteps = sequenceStepRepository.findByCampaignIdOrderByStepOrderAsc(campaignId);
+        logger.info("Freshness guarantee: Verified {} latest sequence step(s) for campaign ID {}", currentSteps.size(), campaignId);
+        if (currentSteps.isEmpty()) {
+            logger.warn("No sequence steps found for campaign ID {}. Cannot launch campaign without sequence steps.", campaignId);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot launch campaign without sequence steps");
+        }
+
         // 4. Purge any duplicate trackers in trackerRepository for this campaign so each email has at most one tracker
         List<LeadSequenceTracker> existingTrackers = trackerRepository.findByCampaignId(campaignId);
         Set<String> uniqueEmails = new HashSet<>();
@@ -456,23 +464,17 @@ public class EmailCampaignService {
             }
         }
 
-        // 6. Filter pending trackers; if all existing trackers are COMPLETED or FAILED, allow re-triggering them from step 1
-        List<LeadSequenceTracker> trackersToProcess = allTrackers.stream()
-                .filter(t -> "PENDING".equalsIgnoreCase(t.getStatus()))
-                .toList();
-
-        if (trackersToProcess.isEmpty() && !allTrackers.isEmpty()) {
-            logger.info("All {} tracker(s) for campaign ID {} were previously finished. Resetting to step 1 for re-dispatch.",
-                    allTrackers.size(), campaignId);
-            List<LeadSequenceTracker> resetTrackers = new ArrayList<>();
-            for (LeadSequenceTracker t : allTrackers) {
-                t.setStatus("PENDING");
-                t.setCurrentStepOrder(1);
-                t.setNextExecutionTime(LocalDateTime.now());
-                resetTrackers.add(trackerRepository.save(t));
-            }
-            trackersToProcess = resetTrackers;
+        // Freshness Guarantee 2: Reset lead tracking state so all leads start fresh from updated Step 1 using new flow
+        logger.info("Freshness guarantee: Resetting all {} tracker(s) for campaign ID {} to Step 1 (PENDING) for fresh launch.",
+                allTrackers.size(), campaignId);
+        List<LeadSequenceTracker> trackersToProcess = new ArrayList<>();
+        for (LeadSequenceTracker t : allTrackers) {
+            t.setStatus("PENDING");
+            t.setCurrentStepOrder(1);
+            t.setNextExecutionTime(LocalDateTime.now());
+            trackersToProcess.add(t);
         }
+        trackerRepository.saveAllAndFlush(trackersToProcess);
 
         if (trackersToProcess.isEmpty()) {
             logger.info("No trackers to process for campaign ID {}. Marking campaign as COMPLETED.", campaignId);
@@ -743,6 +745,7 @@ public class EmailCampaignService {
         }
 
         sequenceStepRepository.deleteByCampaignId(campaignId);
+        sequenceStepRepository.flush();
 
         if (stepRequests == null || stepRequests.isEmpty()) {
             return List.of();
@@ -765,7 +768,7 @@ public class EmailCampaignService {
             order++;
         }
 
-        List<SequenceStep> saved = sequenceStepRepository.saveAll(newSteps);
+        List<SequenceStep> saved = sequenceStepRepository.saveAllAndFlush(newSteps);
         logger.info("Successfully synced {} sequence steps for campaign ID {}", saved.size(), campaignId);
         return saved;
     }
