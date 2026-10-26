@@ -763,15 +763,16 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     <div className="w-full max-w-[1640px] mx-auto px-4 md:px-8 py-6 space-y-6">
       
       {/* Page Header / Sequence Metrics Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-[#353535] pb-6 gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between border-b border-[#353535] pb-6 gap-6">
         <div>
-          <div className="flex items-center gap-3 mb-1 min-h-[22px]">
+          {/* Top Category Tag & Identification */}
+          <div className="flex flex-wrap items-center gap-2.5 mb-1.5 min-h-[22px]">
             <span className="text-xs font-mono text-[#37cd84] uppercase tracking-widest block">
               Campaign Workflow
             </span>
             {campaign && (
-              <div className="flex items-center gap-2">
-                <span className="bg-[#212121] text-[#b9b9b9] text-[10px] font-mono px-2 py-0.5 rounded border border-[#353535]">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="bg-[#1c1c1c] text-[#8e8e8e] text-[10px] font-mono px-2 py-0.5 rounded border border-[#2e2e2e]">
                   Campaign #{campaign.id}: {campaign.name}
                 </span>
                 <span className={`text-[10px] font-mono px-2 py-0.5 rounded border flex items-center gap-1.5 ${
@@ -803,19 +804,69 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
               </div>
             )}
           </div>
+
           <h1 className="text-3xl md:text-4xl font-normal tracking-tight text-white font-sans">
             Automated Outreach Sequence Studio
           </h1>
           <p className="text-xs md:text-sm text-[#b9b9b9] mt-1">
             Build multi-step Email & WhatsApp flows with live preview, dynamic token injection, and automated scheduling.
           </p>
+
+          {/* Read-Only Status Metrics (Separated as subtle metadata pills rather than action buttons) */}
+          <div className="flex flex-wrap items-center gap-2 mt-3 pt-0.5 text-xs font-mono">
+            {/* Metric Pill: Leads Enrolled */}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  const nextState = !isPopoverOpen;
+                  setIsPopoverOpen(nextState);
+                  if (nextState && onRefreshQueue) {
+                    onRefreshQueue();
+                  }
+                }}
+                className="h-7 inline-flex items-center gap-1.5 bg-[#161616] border border-[#2b2b2b] hover:border-[#404040] text-[#a3a3a3] hover:text-white px-2.5 rounded-md text-[11px] font-mono cursor-pointer transition-colors"
+                title="Click to view enrolled leads queue"
+              >
+                <Users className="w-3.5 h-3.5 text-[#f36458]" />
+                <span><strong className="text-white font-medium">{queueTargets ? queueTargets.length : enrolledLeads.length}</strong> Leads Enrolled</span>
+              </button>
+
+              {onClearQueue && onDeleteQueueTarget && (
+                <EnrolledTargetsPopover
+                  isOpen={isPopoverOpen}
+                  onClose={() => setIsPopoverOpen(false)}
+                  queueTargets={queueTargets || []}
+                  isLoading={isQueueLoading || false}
+                  onClearQueue={onClearQueue}
+                  onDeleteTarget={onDeleteQueueTarget}
+                  onUploadFile={onUploadFile || handleFileUpload}
+                  isUploadingFile={isUploadingFile || isUploadingFileProp}
+                  onRefresh={onRefreshQueue}
+                  align="left"
+                />
+              )}
+            </div>
+
+            {/* Metric Pill: Window & Daily Quota */}
+            <button
+              onClick={() => setIsScheduleModalOpen(true)}
+              className="h-7 inline-flex items-center gap-1.5 bg-[#161616] border border-[#2b2b2b] hover:border-[#404040] text-[#a3a3a3] hover:text-white px-2.5 rounded-md text-[11px] font-mono cursor-pointer transition-colors"
+              title="Click to view and configure sending window"
+            >
+              <Clock className="w-3.5 h-3.5 text-[#55beff]" />
+              <span>Window: <strong className="text-white font-medium">{campaign?.sending_window_start || '09:00'} - {campaign?.sending_window_end || '17:00'}</strong></span>
+              <span className="text-[10px] bg-[#0c0c0c] text-[#37cd84] px-1.5 py-0.2 rounded border border-[#262626]">
+                {campaign?.daily_sent_count ?? 0}/{campaign?.max_daily_limit ?? 50} today
+              </span>
+            </button>
+          </div>
         </div>
 
-        {/* Sequence Metrics Quick Bar & Actions */}
-        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+        {/* Grouped Interactive Action Buttons (Single Aligned Flex Container) */}
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 sm:gap-3 shrink-0">
 
-          {/* Excel / CSV Lead Import Action */}
-          <label className="h-9 inline-flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#37cd84] text-white hover:text-[#37cd84] px-4 rounded-lg text-xs font-mono cursor-pointer transition-all shrink-0">
+          {/* Import Leads Action */}
+          <label className="h-10 inline-flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#37cd84] text-white hover:text-[#37cd84] px-4 rounded-lg text-xs font-mono cursor-pointer transition-all shrink-0">
             <FileSpreadsheet className={`w-3.5 h-3.5 text-[#37cd84] ${isUploadingFile ? 'animate-bounce' : ''}`} />
             <span>{isUploadingFile ? 'Importing...' : 'Import Leads'}</span>
             <input
@@ -828,58 +879,11 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
             />
           </label>
 
-          {/* Enrolled Targets Queue Mini-Dashboard Popover Window */}
-          <div className="relative shrink-0">
-            <button
-              onClick={() => {
-                const nextState = !isPopoverOpen;
-                setIsPopoverOpen(nextState);
-                if (nextState && onRefreshQueue) {
-                  onRefreshQueue();
-                }
-              }}
-              className="h-9 inline-flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#b9b9b9] px-4 rounded-lg text-xs font-mono text-white cursor-pointer transition-all shrink-0"
-            >
-              <Users className="w-4 h-4 text-[#f36458]" />
-              <span><strong className="text-[#37cd84]">{queueTargets ? queueTargets.length : enrolledLeads.length}</strong> Leads Enrolled</span>
-            </button>
-
-            {onClearQueue && onDeleteQueueTarget && (
-              <EnrolledTargetsPopover
-                isOpen={isPopoverOpen}
-                onClose={() => setIsPopoverOpen(false)}
-                queueTargets={queueTargets || []}
-                isLoading={isQueueLoading || false}
-                onClearQueue={onClearQueue}
-                onDeleteTarget={onDeleteQueueTarget}
-                onUploadFile={onUploadFile || handleFileUpload}
-                isUploadingFile={isUploadingFile || isUploadingFileProp}
-                onRefresh={onRefreshQueue}
-                align="left"
-              />
-            )}
-          </div>
-
-          {/* Sending Window & Timing Controls Button */}
-          <button
-            onClick={() => setIsScheduleModalOpen(true)}
-            className="h-9 inline-flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#55beff] px-4 rounded-lg text-xs font-mono text-white hover:text-[#55beff] cursor-pointer transition-all shrink-0"
-            title="Configure sending windows, business hours, timezone, and daily limits"
-          >
-            <Clock className="w-4 h-4 text-[#55beff]" />
-            <span>
-              Window: <strong className="text-white">{campaign?.sending_window_start || '09:00'} - {campaign?.sending_window_end || '17:00'}</strong>
-            </span>
-            <span className="text-[10px] bg-[#161616] text-[#37cd84] px-1.5 py-0.5 rounded border border-[#353535]">
-              {campaign?.daily_sent_count ?? 0}/{campaign?.max_daily_limit ?? 50} today
-            </span>
-          </button>
-
-          {/* Pause / Resume Campaign Button / Toggle */}
+          {/* Pause / Resume Campaign */}
           <button
             onClick={handleTogglePauseResume}
             disabled={isUpdatingStatus || !campaign || isCampaignCompleted}
-            className={`h-9 inline-flex items-center gap-2 px-4 rounded-lg text-xs font-mono transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0 ${
+            className={`h-10 inline-flex items-center gap-2 px-4 rounded-lg text-xs font-mono transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0 ${
               isCampaignPaused
                 ? 'bg-amber-500/15 border border-amber-500/60 text-amber-300 hover:bg-amber-500/25 shadow-sm shadow-amber-500/20 cursor-pointer'
                 : isCampaignCompleted
@@ -904,11 +908,11 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
             <span>{isUpdatingStatus ? 'Updating...' : isCampaignPaused ? 'Resume Campaign' : 'Pause Campaign'}</span>
           </button>
 
-          {/* Delete Campaign Button */}
+          {/* Delete Campaign */}
           <button
             onClick={() => setIsDeleteDialogOpen(true)}
             disabled={!campaign || isDeletingCampaign || isCampaignCompleted}
-            className={`h-9 inline-flex items-center gap-2 px-4 rounded-lg text-xs font-mono transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0 ${
+            className={`h-10 inline-flex items-center gap-2 px-4 rounded-lg text-xs font-mono transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0 ${
               isCampaignCompleted
                 ? 'bg-[#1a1a1a] border border-[#2b2b2b] text-[#555555]'
                 : 'bg-red-950/20 border border-red-500/30 hover:border-red-500/60 text-red-400 hover:text-red-300 hover:bg-red-950/40 cursor-pointer'
@@ -927,7 +931,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
           <button
             onClick={handleProcessCampaignImmediately}
             disabled={isLaunchDisabled}
-            className={`h-9 inline-flex items-center gap-2 px-4 rounded-lg text-xs font-bold font-mono transition-all shadow-md cursor-pointer disabled:cursor-not-allowed shrink-0 ${
+            className={`h-10 inline-flex items-center gap-2 px-5 rounded-lg text-xs font-bold font-mono transition-all shadow-md cursor-pointer disabled:cursor-not-allowed shrink-0 ${
               isCampaignRunning
                 ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-500/30 cursor-not-allowed shadow-none'
                 : isLaunchDisabled 
