@@ -41,6 +41,18 @@ public class Campaign {
     @Column(name = "daily_sent_count")
     private Integer dailySentCount = 0;
 
+    @Column(name = "max_daily_email_limit")
+    private Integer maxDailyEmailLimit = 50;
+
+    @Column(name = "max_daily_whatsapp_limit")
+    private Integer maxDailyWhatsappLimit = 100;
+
+    @Column(name = "daily_email_sent_count")
+    private Integer dailyEmailSentCount = 0;
+
+    @Column(name = "daily_whatsapp_sent_count")
+    private Integer dailyWhatsappSentCount = 0;
+
     @Column(name = "last_dispatch_date")
     private LocalDate lastDispatchDate;
 
@@ -60,13 +72,22 @@ public class Campaign {
 
     public Campaign(String name, String status, String sendingWindowStart, String sendingWindowEnd,
                     String timezone, String allowedDays, Integer maxDailyLimit) {
+        this(name, status, sendingWindowStart, sendingWindowEnd, timezone, allowedDays, maxDailyLimit, 100);
+    }
+
+    public Campaign(String name, String status, String sendingWindowStart, String sendingWindowEnd,
+                    String timezone, String allowedDays, Integer maxDailyEmailLimit, Integer maxDailyWhatsappLimit) {
         this.name = name;
         this.status = status;
         this.sendingWindowStart = sendingWindowStart != null ? sendingWindowStart : "09:00";
         this.sendingWindowEnd = sendingWindowEnd != null ? sendingWindowEnd : "17:00";
         this.timezone = timezone != null ? timezone : "Asia/Kolkata";
         this.allowedDays = allowedDays != null ? allowedDays : "MON,TUE,WED,THU,FRI";
-        this.maxDailyLimit = maxDailyLimit != null ? maxDailyLimit : 50;
+        this.maxDailyEmailLimit = maxDailyEmailLimit != null && maxDailyEmailLimit > 0 ? Math.min(200, maxDailyEmailLimit) : 50;
+        this.maxDailyWhatsappLimit = maxDailyWhatsappLimit != null && maxDailyWhatsappLimit > 0 ? Math.min(1000, maxDailyWhatsappLimit) : 100;
+        this.maxDailyLimit = this.maxDailyEmailLimit;
+        this.dailyEmailSentCount = 0;
+        this.dailyWhatsappSentCount = 0;
         this.dailySentCount = 0;
     }
 
@@ -126,16 +147,62 @@ public class Campaign {
         this.allowedDays = allowedDays;
     }
 
+    public Integer getMaxDailyEmailLimit() {
+        return maxDailyEmailLimit != null && maxDailyEmailLimit > 0 ? Math.min(200, maxDailyEmailLimit) : 50;
+    }
+
+    public void setMaxDailyEmailLimit(Integer maxDailyEmailLimit) {
+        this.maxDailyEmailLimit = maxDailyEmailLimit != null && maxDailyEmailLimit > 0 ? Math.min(200, maxDailyEmailLimit) : 50;
+        this.maxDailyLimit = this.maxDailyEmailLimit;
+    }
+
+    public Integer getMaxDailyWhatsappLimit() {
+        return maxDailyWhatsappLimit != null && maxDailyWhatsappLimit > 0 ? Math.min(1000, maxDailyWhatsappLimit) : 100;
+    }
+
+    public void setMaxDailyWhatsappLimit(Integer maxDailyWhatsappLimit) {
+        this.maxDailyWhatsappLimit = maxDailyWhatsappLimit != null && maxDailyWhatsappLimit > 0 ? Math.min(1000, maxDailyWhatsappLimit) : 100;
+    }
+
+    public Integer getDailyEmailSentCount() {
+        return dailyEmailSentCount != null ? dailyEmailSentCount : 0;
+    }
+
+    public void setDailyEmailSentCount(Integer dailyEmailSentCount) {
+        this.dailyEmailSentCount = dailyEmailSentCount;
+    }
+
+    public Integer getDailyWhatsappSentCount() {
+        return dailyWhatsappSentCount != null ? dailyWhatsappSentCount : 0;
+    }
+
+    public void setDailyWhatsappSentCount(Integer dailyWhatsappSentCount) {
+        this.dailyWhatsappSentCount = dailyWhatsappSentCount;
+    }
+
+    public Integer getEmailsSentToday() {
+        return getDailyEmailSentCount();
+    }
+
+    public Integer getWhatsappSentToday() {
+        return getDailyWhatsappSentCount();
+    }
+
     public Integer getMaxDailyLimit() {
-        return maxDailyLimit != null && maxDailyLimit > 0 ? maxDailyLimit : 50;
+        return getMaxDailyEmailLimit();
     }
 
     public void setMaxDailyLimit(Integer maxDailyLimit) {
         this.maxDailyLimit = maxDailyLimit;
+        if (maxDailyLimit != null && maxDailyLimit > 0) {
+            this.maxDailyEmailLimit = Math.min(200, maxDailyLimit);
+        }
     }
 
     public Integer getDailySentCount() {
-        return dailySentCount != null ? dailySentCount : 0;
+        int email = dailyEmailSentCount != null ? dailyEmailSentCount : 0;
+        int whatsapp = dailyWhatsappSentCount != null ? dailyWhatsappSentCount : 0;
+        return (email + whatsapp > 0) ? (email + whatsapp) : (dailySentCount != null ? dailySentCount : 0);
     }
 
     public void setDailySentCount(Integer dailySentCount) {

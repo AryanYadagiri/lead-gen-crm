@@ -25,6 +25,24 @@ public record CampaignResponse(
         @JsonProperty("allowed_days")
         String allowedDays,
 
+        @JsonProperty("max_daily_email_limit")
+        Integer maxDailyEmailLimit,
+
+        @JsonProperty("max_daily_whatsapp_limit")
+        Integer maxDailyWhatsappLimit,
+
+        @JsonProperty("daily_email_sent_count")
+        Integer dailyEmailSentCount,
+
+        @JsonProperty("daily_whatsapp_sent_count")
+        Integer dailyWhatsappSentCount,
+
+        @JsonProperty("emails_sent_today")
+        Integer emailsSentToday,
+
+        @JsonProperty("whatsapp_sent_today")
+        Integer whatsappSentToday,
+
         @JsonProperty("max_daily_limit")
         Integer maxDailyLimit,
 
@@ -43,6 +61,12 @@ public record CampaignResponse(
                 campaign.getSendingWindowEnd(),
                 campaign.getTimezone(),
                 campaign.getAllowedDays(),
+                campaign.getMaxDailyEmailLimit(),
+                campaign.getMaxDailyWhatsappLimit(),
+                campaign.getDailyEmailSentCount(),
+                campaign.getDailyWhatsappSentCount(),
+                campaign.getEmailsSentToday(),
+                campaign.getWhatsappSentToday(),
                 campaign.getMaxDailyLimit(),
                 campaign.getDailySentCount()
         );

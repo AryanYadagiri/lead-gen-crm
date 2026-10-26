@@ -130,8 +130,8 @@ class EmailCampaignServiceTest {
     @Test
     void testIsUnderDailyLimitAndResetIfNewDay() {
         Campaign campaign = new Campaign("Test", "RUNNING");
-        campaign.setMaxDailyLimit(2);
-        campaign.setDailySentCount(2);
+        campaign.setMaxDailyEmailLimit(2);
+        campaign.setDailyEmailSentCount(2);
         campaign.setLastDispatchDate(LocalDate.of(2026, 10, 22)); // Yesterday
 
         ZoneId zone = ZoneId.of("Asia/Kolkata");
@@ -140,12 +140,48 @@ class EmailCampaignServiceTest {
         // Date changed -> resets daily count to 0, returns true
         boolean canSend = service.isUnderDailyLimitAndResetIfNewDay(campaign, today);
         assertTrue(canSend);
-        assertEquals(0, campaign.getDailySentCount());
+        assertEquals(0, campaign.getDailyEmailSentCount());
         assertEquals(LocalDate.of(2026, 10, 23), campaign.getLastDispatchDate());
 
         // Fill up to max limit of 2
-        campaign.setDailySentCount(2);
+        campaign.setDailyEmailSentCount(2);
         assertFalse(service.isUnderDailyLimitAndResetIfNewDay(campaign, today));
+    }
+
+    @Test
+    void testIsUnderChannelDailyLimitAndResetIfNewDay_IndependentQuotas() {
+        Campaign campaign = new Campaign("Test", "RUNNING");
+        campaign.setMaxDailyEmailLimit(2);
+        campaign.setMaxDailyWhatsappLimit(5);
+        campaign.setDailyEmailSentCount(2); // Email limit reached
+        campaign.setDailyWhatsappSentCount(1); // WhatsApp quota still available
+        campaign.setLastDispatchDate(LocalDate.of(2026, 10, 23));
+
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        ZonedDateTime today = ZonedDateTime.of(LocalDate.of(2026, 10, 23), LocalTime.of(10, 0), zone);
+
+        // Email should be blocked
+        assertFalse(service.isUnderChannelDailyLimitAndResetIfNewDay(campaign, "email", today));
+        // WhatsApp should be allowed
+        assertTrue(service.isUnderChannelDailyLimitAndResetIfNewDay(campaign, "whatsapp", today));
+
+        // Date advances to next day -> resets both counters
+        ZonedDateTime tomorrow = ZonedDateTime.of(LocalDate.of(2026, 10, 24), LocalTime.of(10, 0), zone);
+        assertTrue(service.isUnderChannelDailyLimitAndResetIfNewDay(campaign, "email", tomorrow));
+        assertEquals(0, campaign.getDailyEmailSentCount());
+        assertEquals(0, campaign.getDailyWhatsappSentCount());
+        assertEquals(LocalDate.of(2026, 10, 24), campaign.getLastDispatchDate());
+    }
+
+    @Test
+    void testQuotaCaps_Enforced() {
+        Campaign campaign = new Campaign("Test", "RUNNING");
+        // Over maximums
+        campaign.setMaxDailyEmailLimit(500); // Max allowed: 200
+        campaign.setMaxDailyWhatsappLimit(2000); // Max allowed: 1000
+
+        assertEquals(200, campaign.getMaxDailyEmailLimit(), "Email limit must be capped at 200");
+        assertEquals(1000, campaign.getMaxDailyWhatsappLimit(), "WhatsApp limit must be capped at 1000");
     }
 
     @Test

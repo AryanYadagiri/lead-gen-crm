@@ -103,7 +103,8 @@ public class EmailCampaignService {
                 "17:00",
                 "Asia/Kolkata",
                 "MON,TUE,WED,THU,FRI",
-                50
+                50,
+                100
         ));
 
         // Seed initial steps matching frontend DEFAULT_SEQUENCE_STEPS
@@ -195,23 +196,38 @@ public class EmailCampaignService {
     }
 
     /**
-     * Throttling/Limits: Does sending another email exceed max_daily_limit for today?
-     * Resets the dailySentCount counter if the calendar day in the target timezone has advanced.
+     * Throttling/Limits: Evaluates email and WhatsApp quotas independently against today's sent counters.
+     * Resets the daily sent counters if the calendar day in the target timezone has advanced.
      */
     @Transactional
-    public boolean isUnderDailyLimitAndResetIfNewDay(Campaign campaign, ZonedDateTime nowInZone) {
+    public boolean isUnderChannelDailyLimitAndResetIfNewDay(Campaign campaign, String channel, ZonedDateTime nowInZone) {
         LocalDate todayInZone = nowInZone.toLocalDate();
         if (campaign.getLastDispatchDate() == null || !campaign.getLastDispatchDate().equals(todayInZone)) {
+            campaign.setDailyEmailSentCount(0);
+            campaign.setDailyWhatsappSentCount(0);
             campaign.setDailySentCount(0);
             campaign.setLastDispatchDate(todayInZone);
             campaignRepository.save(campaign);
         }
 
-        int maxLimit = campaign.getMaxDailyLimit() != null && campaign.getMaxDailyLimit() > 0
-                ? campaign.getMaxDailyLimit()
-                : 50;
-        int sentToday = campaign.getDailySentCount() != null ? campaign.getDailySentCount() : 0;
-        return sentToday < maxLimit;
+        if ("whatsapp".equalsIgnoreCase(channel)) {
+            int maxWhatsappLimit = campaign.getMaxDailyWhatsappLimit() != null && campaign.getMaxDailyWhatsappLimit() > 0
+                    ? Math.min(1000, campaign.getMaxDailyWhatsappLimit())
+                    : 100;
+            int sentToday = campaign.getDailyWhatsappSentCount() != null ? campaign.getDailyWhatsappSentCount() : 0;
+            return sentToday < maxWhatsappLimit;
+        } else {
+            int maxEmailLimit = campaign.getMaxDailyEmailLimit() != null && campaign.getMaxDailyEmailLimit() > 0
+                    ? Math.min(200, campaign.getMaxDailyEmailLimit())
+                    : 50;
+            int sentToday = campaign.getDailyEmailSentCount() != null ? campaign.getDailyEmailSentCount() : 0;
+            return sentToday < maxEmailLimit;
+        }
+    }
+
+    @Transactional
+    public boolean isUnderDailyLimitAndResetIfNewDay(Campaign campaign, ZonedDateTime nowInZone) {
+        return isUnderChannelDailyLimitAndResetIfNewDay(campaign, "email", nowInZone);
     }
 
     /**
@@ -284,23 +300,43 @@ public class EmailCampaignService {
     }
 
     /**
-     * Increments the campaign daily sent counter and persists the dispatch date in target timezone.
+     * Increments the channel-specific daily sent counter and persists the dispatch date in target timezone.
      */
     @Transactional
-    public synchronized void recordEmailDispatched(Long campaignId) {
+    public synchronized void recordDispatched(Long campaignId, String channel) {
         if (campaignId == null) return;
         campaignRepository.findById(campaignId).ifPresent(campaign -> {
             ZoneId zoneId = resolveCampaignZoneId(campaign);
             LocalDate todayInZone = ZonedDateTime.now(zoneId).toLocalDate();
             if (campaign.getLastDispatchDate() == null || !campaign.getLastDispatchDate().equals(todayInZone)) {
-                campaign.setDailySentCount(1);
+                campaign.setDailyEmailSentCount(0);
+                campaign.setDailyWhatsappSentCount(0);
+                campaign.setDailySentCount(0);
                 campaign.setLastDispatchDate(todayInZone);
-            } else {
-                int current = campaign.getDailySentCount() != null ? campaign.getDailySentCount() : 0;
-                campaign.setDailySentCount(current + 1);
             }
+
+            if ("whatsapp".equalsIgnoreCase(channel)) {
+                int current = campaign.getDailyWhatsappSentCount() != null ? campaign.getDailyWhatsappSentCount() : 0;
+                campaign.setDailyWhatsappSentCount(current + 1);
+            } else {
+                int current = campaign.getDailyEmailSentCount() != null ? campaign.getDailyEmailSentCount() : 0;
+                campaign.setDailyEmailSentCount(current + 1);
+            }
+            int total = (campaign.getDailyEmailSentCount() != null ? campaign.getDailyEmailSentCount() : 0)
+                    + (campaign.getDailyWhatsappSentCount() != null ? campaign.getDailyWhatsappSentCount() : 0);
+            campaign.setDailySentCount(total);
             campaignRepository.save(campaign);
         });
+    }
+
+    @Transactional
+    public synchronized void recordEmailDispatched(Long campaignId) {
+        recordDispatched(campaignId, "email");
+    }
+
+    @Transactional
+    public synchronized void recordWhatsappDispatched(Long campaignId) {
+        recordDispatched(campaignId, "whatsapp");
     }
 
     /**
@@ -423,16 +459,18 @@ public class EmailCampaignService {
                 continue;
             }
 
-            // 3. Throttling / Daily Limits Check
-            int maxDailyLimit = campaign.getMaxDailyLimit() != null && campaign.getMaxDailyLimit() > 0
-                    ? campaign.getMaxDailyLimit()
-                    : 50;
-
+            // 3. Throttling / Channel-Specific Daily Limits Check (Email vs WhatsApp)
             for (LeadSequenceTracker tracker : trackers) {
-                if (!isUnderDailyLimitAndResetIfNewDay(campaign, nowInZone)) {
-                    logger.info("Campaign ID {}: Daily limit of {} reached ({}/{} dispatched). Skipping remaining pending trackers until tomorrow.",
-                            campaignId, maxDailyLimit, campaign.getDailySentCount(), maxDailyLimit);
-                    break;
+                Optional<SequenceStep> currentStepOpt = sequenceStepRepository
+                        .findByCampaignIdAndStepOrder(campaignId, tracker.getCurrentStepOrder());
+                String channel = currentStepOpt.map(SequenceStep::getChannel).orElse("email");
+
+                if (!isUnderChannelDailyLimitAndResetIfNewDay(campaign, channel, nowInZone)) {
+                    int sent = "whatsapp".equalsIgnoreCase(channel) ? campaign.getDailyWhatsappSentCount() : campaign.getDailyEmailSentCount();
+                    int max = "whatsapp".equalsIgnoreCase(channel) ? campaign.getMaxDailyWhatsappLimit() : campaign.getMaxDailyEmailLimit();
+                    logger.info("Campaign ID {}: Daily limit for {} reached ({}/{} sent today). Skipping tracker ID {} until quota resets.",
+                            campaignId, channel, sent, max, tracker.getId());
+                    continue;
                 }
 
                 dispatchedCount++;
@@ -629,7 +667,7 @@ public class EmailCampaignService {
                     String targetPhone = tracker.getPhone() != null ? tracker.getPhone() : "[No Phone]";
                     logger.info("Dispatched WhatsApp step {} to recipient {} via Web API: {}",
                             tracker.getCurrentStepOrder(), targetPhone, parsedBody);
-                    recordEmailDispatched(tracker.getCampaignId());
+                    recordWhatsappDispatched(tracker.getCampaignId());
                 } else {
                     // Verify email validity with MyEmailVerifier to prevent sending campaigns to invalid email IDs
                     MyEmailVerifierResponse verification = emailVerifierService.verifyEmail(tracker.getEmail());
@@ -662,6 +700,7 @@ public class EmailCampaignService {
 
         if (nextStepOpt.isPresent()) {
             SequenceStep nextStep = nextStepOpt.get();
+            String nextChannel = nextStep.getChannel() != null ? nextStep.getChannel().toLowerCase() : "email";
             tracker.setCurrentStepOrder(tracker.getCurrentStepOrder() + 1);
             int delay = Math.max(0, nextStep.getDelayDays());
             LocalDateTime actualExecutionTime = LocalDateTime.now();
@@ -677,13 +716,13 @@ public class EmailCampaignService {
                 boolean running = !isCampaignPaused(campaign.getId());
                 boolean allowedDay = isAllowedDay(campaign, nowInZone);
                 boolean withinWindow = isWithinSendingWindow(campaign, nowInZone);
-                boolean underQuota = isUnderDailyLimitAndResetIfNewDay(campaign, nowInZone);
+                boolean underQuota = isUnderChannelDailyLimitAndResetIfNewDay(campaign, nextChannel, nowInZone);
 
                 if (running && allowedDay && withinWindow && underQuota) {
                     tracker.setNextExecutionTime(actualExecutionTime);
                     trackerRepository.saveAndFlush(tracker);
-                    logger.info("Intentional 0-day delay: Executing Step {} immediately for lead {} in campaign {} (same-day multiple email dispatch allowed)",
-                            tracker.getCurrentStepOrder(), tracker.getEmail(), tracker.getCampaignId());
+                    logger.info("Intentional 0-day delay: Executing Step {} ({}) immediately for lead {} in campaign {} (same-day multiple dispatch allowed)",
+                            tracker.getCurrentStepOrder(), nextChannel, tracker.getEmail(), tracker.getCampaignId());
                     processTracker(tracker);
                     return;
                 } else {
@@ -1051,12 +1090,13 @@ public class EmailCampaignService {
                 request.sendingWindowEnd(),
                 request.timezone(),
                 request.resolvedAllowedDays(),
-                request.maxDailyLimit()
+                request.resolvedMaxDailyEmailLimit(),
+                request.resolvedMaxDailyWhatsappLimit()
         );
         Campaign saved = campaignRepository.save(campaign);
-        logger.info("Created campaign ID {} with name '{}', window=[{}-{}], timezone={}, days={}, dailyLimit={}",
+        logger.info("Created campaign ID {} with name '{}', window=[{}-{}], timezone={}, days={}, emailLimit={}, whatsappLimit={}",
                 saved.getId(), saved.getName(), saved.getSendingWindowStart(), saved.getSendingWindowEnd(),
-                saved.getTimezone(), saved.getAllowedDays(), saved.getMaxDailyLimit());
+                saved.getTimezone(), saved.getAllowedDays(), saved.getMaxDailyEmailLimit(), saved.getMaxDailyWhatsappLimit());
         return saved;
     }
 
@@ -1085,13 +1125,19 @@ public class EmailCampaignService {
         if (request.resolvedAllowedDays() != null && !request.resolvedAllowedDays().isBlank()) {
             campaign.setAllowedDays(request.resolvedAllowedDays().trim());
         }
-        if (request.maxDailyLimit() != null && request.maxDailyLimit() > 0) {
+        if (request.maxDailyEmailLimit() != null && request.maxDailyEmailLimit() > 0) {
+            campaign.setMaxDailyEmailLimit(request.maxDailyEmailLimit());
+        }
+        if (request.maxDailyWhatsappLimit() != null && request.maxDailyWhatsappLimit() > 0) {
+            campaign.setMaxDailyWhatsappLimit(request.maxDailyWhatsappLimit());
+        }
+        if (request.maxDailyLimit() != null && request.maxDailyLimit() > 0 && request.maxDailyEmailLimit() == null) {
             campaign.setMaxDailyLimit(request.maxDailyLimit());
         }
         Campaign saved = campaignRepository.save(campaign);
-        logger.info("Updated campaign ID {} configuration: status={}, window=[{}-{}], timezone={}, days={}, dailyLimit={}",
+        logger.info("Updated campaign ID {} configuration: status={}, window=[{}-{}], timezone={}, days={}, emailLimit={}, whatsappLimit={}",
                 saved.getId(), saved.getStatus(), saved.getSendingWindowStart(), saved.getSendingWindowEnd(),
-                saved.getTimezone(), saved.getAllowedDays(), saved.getMaxDailyLimit());
+                saved.getTimezone(), saved.getAllowedDays(), saved.getMaxDailyEmailLimit(), saved.getMaxDailyWhatsappLimit());
         return saved;
     }
 

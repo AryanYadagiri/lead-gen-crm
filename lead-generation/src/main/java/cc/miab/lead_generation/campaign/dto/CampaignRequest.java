@@ -33,6 +33,14 @@ public record CampaignRequest(
         @JsonProperty("allowed_days")
         Object allowedDays,
 
+        @JsonAlias({"max_daily_email_limit", "maxDailyEmailLimit", "email_limit", "emailLimit"})
+        @JsonProperty("max_daily_email_limit")
+        Integer maxDailyEmailLimit,
+
+        @JsonAlias({"max_daily_whatsapp_limit", "maxDailyWhatsappLimit", "whatsapp_limit", "whatsappLimit"})
+        @JsonProperty("max_daily_whatsapp_limit")
+        Integer maxDailyWhatsappLimit,
+
         @JsonAlias({"max_daily_limit", "maxDailyLimit"})
         @JsonProperty("max_daily_limit")
         Integer maxDailyLimit
@@ -43,5 +51,22 @@ public record CampaignRequest(
             return coll.stream().map(Object::toString).collect(Collectors.joining(","));
         }
         return allowedDays.toString();
+    }
+
+    public Integer resolvedMaxDailyEmailLimit() {
+        if (maxDailyEmailLimit != null && maxDailyEmailLimit > 0) {
+            return Math.min(200, maxDailyEmailLimit);
+        }
+        if (maxDailyLimit != null && maxDailyLimit > 0) {
+            return Math.min(200, maxDailyLimit);
+        }
+        return 50;
+    }
+
+    public Integer resolvedMaxDailyWhatsappLimit() {
+        if (maxDailyWhatsappLimit != null && maxDailyWhatsappLimit > 0) {
+            return Math.min(1000, maxDailyWhatsappLimit);
+        }
+        return 100;
     }
 }

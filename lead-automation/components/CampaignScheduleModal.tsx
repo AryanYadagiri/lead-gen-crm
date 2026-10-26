@@ -13,7 +13,9 @@ import {
   CheckCircle2, 
   ShieldCheck, 
   Zap, 
-  RefreshCw 
+  RefreshCw,
+  Mail,
+  MessageSquare
 } from 'lucide-react';
 
 interface CampaignScheduleModalProps {
@@ -58,7 +60,8 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
   const [windowEnd, setWindowEnd] = useState<string>('17:00');
   const [timezone, setTimezone] = useState<string>('Asia/Kolkata');
   const [selectedDays, setSelectedDays] = useState<string[]>(['MON', 'TUE', 'WED', 'THU', 'FRI']);
-  const [maxDailyLimit, setMaxDailyLimit] = useState<number>(50);
+  const [maxDailyEmailLimit, setMaxDailyEmailLimit] = useState<number>(50);
+  const [maxDailyWhatsappLimit, setMaxDailyWhatsappLimit] = useState<number>(100);
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
 
   // Synchronize state when campaign prop updates or modal opens
@@ -67,7 +70,11 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
       setWindowStart(campaign.sending_window_start || '09:00');
       setWindowEnd(campaign.sending_window_end || '17:00');
       setTimezone(campaign.timezone || 'Asia/Kolkata');
-      setMaxDailyLimit(campaign.max_daily_limit || 50);
+      
+      const emailLimit = campaign.max_daily_email_limit ?? (campaign.max_daily_limit ? Math.min(200, campaign.max_daily_limit) : 50);
+      const whatsappLimit = campaign.max_daily_whatsapp_limit ?? 100;
+      setMaxDailyEmailLimit(emailLimit);
+      setMaxDailyWhatsappLimit(whatsappLimit);
 
       const rawDays = campaign.allowed_days || 'MON,TUE,WED,THU,FRI';
       const parsedDays = rawDays
@@ -142,8 +149,11 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
         isTimeAllowed = true;
       }
 
-      const dailySent = campaign?.daily_sent_count ?? 0;
-      const isQuotaAvailable = dailySent < maxDailyLimit;
+      const emailSent = campaign?.daily_email_sent_count ?? campaign?.emails_sent_today ?? 0;
+      const whatsappSent = campaign?.daily_whatsapp_sent_count ?? campaign?.whatsapp_sent_today ?? 0;
+      const isEmailQuotaAvailable = emailSent < maxDailyEmailLimit;
+      const isWhatsappQuotaAvailable = whatsappSent < maxDailyWhatsappLimit;
+      const isQuotaAvailable = isEmailQuotaAvailable || isWhatsappQuotaAvailable;
 
       const isWindowOpen = isDayAllowed && isTimeAllowed && isQuotaAvailable;
 
@@ -152,6 +162,8 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
         isDayAllowed,
         isTimeAllowed,
         isQuotaAvailable,
+        isEmailQuotaAvailable,
+        isWhatsappQuotaAvailable,
         currentDay: weekdayPart,
       };
     } catch (e) {
@@ -160,10 +172,12 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
         isDayAllowed: true,
         isTimeAllowed: true,
         isQuotaAvailable: true,
+        isEmailQuotaAvailable: true,
+        isWhatsappQuotaAvailable: true,
         currentDay: 'MON',
       };
     }
-  }, [timezone, windowStart, windowEnd, selectedDays, campaign, maxDailyLimit]);
+  }, [timezone, windowStart, windowEnd, selectedDays, campaign, maxDailyEmailLimit, maxDailyWhatsappLimit]);
 
   if (!isOpen) return null;
 
@@ -191,9 +205,11 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
         sending_window_end: windowEnd,
         timezone,
         allowed_days: allowedDaysStr,
-        max_daily_limit: maxDailyLimit,
+        max_daily_email_limit: maxDailyEmailLimit,
+        max_daily_whatsapp_limit: maxDailyWhatsappLimit,
+        max_daily_limit: maxDailyEmailLimit,
       });
-      setSaveFeedback('Timing controls saved successfully!');
+      setSaveFeedback('Timing & quota guardrails saved successfully!');
       setTimeout(() => {
         setSaveFeedback(null);
         onClose();
@@ -203,8 +219,10 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
     }
   };
 
-  const dailySent = campaign?.daily_sent_count ?? 0;
-  const quotaPercent = Math.min(100, Math.round((dailySent / Math.max(1, maxDailyLimit)) * 100));
+  const emailSent = campaign?.daily_email_sent_count ?? campaign?.emails_sent_today ?? 0;
+  const whatsappSent = campaign?.daily_whatsapp_sent_count ?? campaign?.whatsapp_sent_today ?? 0;
+  const emailQuotaPercent = Math.min(100, Math.round((emailSent / Math.max(1, maxDailyEmailLimit)) * 100));
+  const whatsappQuotaPercent = Math.min(100, Math.round((whatsappSent / Math.max(1, maxDailyWhatsappLimit)) * 100));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
@@ -433,56 +451,125 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
             </p>
           </div>
 
-          {/* 4. Daily Outreach Limit / Throttling */}
-          <div className="space-y-3 bg-[#181818] p-4 rounded-xl border border-[#2b2b2b]">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-mono text-[#b9b9b9] flex items-center gap-1.5">
-                <Sliders className="w-3.5 h-3.5 text-[#f36458]" /> Max Daily Sending Limit (Per Campaign)
-              </label>
-              <span className="text-xs font-mono text-white font-bold">
-                {maxDailyLimit} emails / day
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min="5"
-                max="300"
-                step="5"
-                value={maxDailyLimit}
-                onChange={(e) => setMaxDailyLimit(Number(e.target.value))}
-                className="w-full accent-[#f36458] cursor-pointer"
-              />
-              <input
-                type="number"
-                min="1"
-                max="1000"
-                value={maxDailyLimit}
-                onChange={(e) => setMaxDailyLimit(Math.max(1, Number(e.target.value)))}
-                className="w-20 bg-[#121212] border border-[#353535] rounded-lg px-2.5 py-1.5 text-xs font-mono text-white text-center focus:outline-none focus:border-[#f36458]"
-              />
-            </div>
-
-            {/* Daily Quota Visual Progress */}
-            <div className="space-y-1 pt-1">
-              <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="text-[#a0a0a0]">Today's Quota Consumption:</span>
-                <span className="text-white font-bold">
-                  {dailySent} / {maxDailyLimit} sent today ({Math.max(0, maxDailyLimit - dailySent)} remaining)
+          {/* 4. Independent Daily Outreach Limits (Email & WhatsApp Guardrails) */}
+          <div className="space-y-4">
+            {/* Daily Email Quota Card */}
+            <div className="space-y-3 bg-[#181818] p-4 rounded-xl border border-[#2b2b2b] hover:border-[#f36458]/40 transition-colors">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-mono text-[#b9b9b9] flex items-center gap-2">
+                  <div className="w-5 h-5 rounded bg-[#f36458]/10 flex items-center justify-center">
+                    <Mail className="w-3.5 h-3.5 text-[#f36458]" />
+                  </div>
+                  <span>Daily Email Quota (Domain Reputation Guardrail)</span>
+                </label>
+                <span className="text-xs font-mono text-[#f36458] font-bold bg-[#f36458]/10 px-2 py-0.5 rounded border border-[#f36458]/30">
+                  {maxDailyEmailLimit} emails / day
                 </span>
               </div>
-              <div className="w-full bg-[#121212] h-2 rounded-full overflow-hidden border border-[#2e2e2e]">
-                <div
-                  className={`h-full transition-all duration-300 rounded-full ${
-                    quotaPercent >= 100 
-                      ? 'bg-red-500' 
-                      : quotaPercent >= 80 
-                      ? 'bg-amber-400' 
-                      : 'bg-[#37cd84]'
-                  }`}
-                  style={{ width: `${quotaPercent}%` }}
+
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="5"
+                  max="200"
+                  step="5"
+                  value={maxDailyEmailLimit}
+                  onChange={(e) => setMaxDailyEmailLimit(Number(e.target.value))}
+                  className="w-full accent-[#f36458] cursor-pointer"
                 />
+                <input
+                  type="number"
+                  min="1"
+                  max="200"
+                  value={maxDailyEmailLimit}
+                  onChange={(e) => setMaxDailyEmailLimit(Math.min(200, Math.max(1, Number(e.target.value))))}
+                  className="w-20 bg-[#121212] border border-[#353535] rounded-lg px-2.5 py-1.5 text-xs font-mono text-white text-center focus:outline-none focus:border-[#f36458]"
+                />
+              </div>
+
+              {/* Email Quota Visual Progress */}
+              <div className="space-y-1 pt-1">
+                <div className="flex items-center justify-between text-[11px] font-mono">
+                  <span className="text-[#a0a0a0]">Email Quota Consumption:</span>
+                  <span className="text-white font-bold">
+                    {emailSent} / {maxDailyEmailLimit} sent today ({Math.max(0, maxDailyEmailLimit - emailSent)} remaining)
+                  </span>
+                </div>
+                <div className="w-full bg-[#121212] h-2 rounded-full overflow-hidden border border-[#2e2e2e]">
+                  <div
+                    className={`h-full transition-all duration-300 rounded-full ${
+                      emailQuotaPercent >= 100 
+                        ? 'bg-red-500' 
+                        : emailQuotaPercent >= 80 
+                        ? 'bg-amber-400' 
+                        : 'bg-[#f36458]'
+                    }`}
+                    style={{ width: `${emailQuotaPercent}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-[#797979] pt-0.5">
+                  Protects email deliverability and prevents mailbox blacklisting. Max safe cap: 200/day.
+                </p>
+              </div>
+            </div>
+
+            {/* Daily WhatsApp Quota Card */}
+            <div className="space-y-3 bg-[#181818] p-4 rounded-xl border border-[#2b2b2b] hover:border-[#37cd84]/40 transition-colors">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-mono text-[#b9b9b9] flex items-center gap-2">
+                  <div className="w-5 h-5 rounded bg-[#37cd84]/10 flex items-center justify-center">
+                    <MessageSquare className="w-3.5 h-3.5 text-[#37cd84]" />
+                  </div>
+                  <span>Daily WhatsApp Quota (Number Ban Protection)</span>
+                </label>
+                <span className="text-xs font-mono text-[#37cd84] font-bold bg-[#37cd84]/10 px-2 py-0.5 rounded border border-[#37cd84]/30">
+                  {maxDailyWhatsappLimit} messages / day
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="10"
+                  max="1000"
+                  step="10"
+                  value={maxDailyWhatsappLimit}
+                  onChange={(e) => setMaxDailyWhatsappLimit(Number(e.target.value))}
+                  className="w-full accent-[#37cd84] cursor-pointer"
+                />
+                <input
+                  type="number"
+                  min="1"
+                  max="1000"
+                  value={maxDailyWhatsappLimit}
+                  onChange={(e) => setMaxDailyWhatsappLimit(Math.min(1000, Math.max(1, Number(e.target.value))))}
+                  className="w-20 bg-[#121212] border border-[#353535] rounded-lg px-2.5 py-1.5 text-xs font-mono text-white text-center focus:outline-none focus:border-[#37cd84]"
+                />
+              </div>
+
+              {/* WhatsApp Quota Visual Progress */}
+              <div className="space-y-1 pt-1">
+                <div className="flex items-center justify-between text-[11px] font-mono">
+                  <span className="text-[#a0a0a0]">WhatsApp Quota Consumption:</span>
+                  <span className="text-white font-bold">
+                    {whatsappSent} / {maxDailyWhatsappLimit} sent today ({Math.max(0, maxDailyWhatsappLimit - whatsappSent)} remaining)
+                  </span>
+                </div>
+                <div className="w-full bg-[#121212] h-2 rounded-full overflow-hidden border border-[#2e2e2e]">
+                  <div
+                    className={`h-full transition-all duration-300 rounded-full ${
+                      whatsappQuotaPercent >= 100 
+                        ? 'bg-red-500' 
+                        : whatsappQuotaPercent >= 80 
+                        ? 'bg-amber-400' 
+                        : 'bg-[#37cd84]'
+                    }`}
+                    style={{ width: `${whatsappQuotaPercent}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-[#797979] pt-0.5">
+                  Throttles bulk automated WhatsApp outreach to prevent sudden account suspension. Max cap: 1,000/day.
+                </p>
               </div>
             </div>
           </div>

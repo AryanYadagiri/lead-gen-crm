@@ -287,7 +287,9 @@ export const updateCampaignSettings = async (
     sending_window_end: string;
     timezone: string;
     allowed_days: string | string[];
-    max_daily_limit: number;
+    max_daily_limit?: number;
+    max_daily_email_limit?: number;
+    max_daily_whatsapp_limit?: number;
   }>
 ): Promise<Campaign> => {
   console.log(`[API] Updating campaign #${campaignId} settings:`, settings);

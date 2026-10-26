@@ -855,8 +855,13 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
             >
               <Clock className="w-3.5 h-3.5 text-[#55beff]" />
               <span>Window: <strong className="text-white font-medium">{campaign?.sending_window_start || '09:00'} - {campaign?.sending_window_end || '17:00'}</strong></span>
-              <span className="text-[10px] bg-[#0c0c0c] text-[#37cd84] px-1.5 py-0.2 rounded border border-[#262626]">
-                {campaign?.daily_sent_count ?? 0}/{campaign?.max_daily_limit ?? 50} today
+              <span className="text-[10px] bg-[#0c0c0c] text-[#f36458] px-1.5 py-0.5 rounded border border-[#262626] flex items-center gap-1" title="Daily Email Quota">
+                <Mail className="w-2.5 h-2.5" />
+                {campaign?.daily_email_sent_count ?? campaign?.emails_sent_today ?? 0}/{campaign?.max_daily_email_limit ?? 50}
+              </span>
+              <span className="text-[10px] bg-[#0c0c0c] text-[#37cd84] px-1.5 py-0.5 rounded border border-[#262626] flex items-center gap-1" title="Daily WhatsApp Quota">
+                <MessageSquare className="w-2.5 h-2.5" />
+                {campaign?.daily_whatsapp_sent_count ?? campaign?.whatsapp_sent_today ?? 0}/{campaign?.max_daily_whatsapp_limit ?? 100}
               </span>
             </button>
           </div>
@@ -1111,11 +1116,19 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
               </strong>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Zap className="w-3.5 h-3.5 text-amber-400" />
-              <span className="text-[11px] text-[#797979]">DAILY QUOTA:</span>
+            <div className="flex items-center gap-1.5">
+              <Mail className="w-3.5 h-3.5 text-[#f36458]" />
+              <span className="text-[11px] text-[#797979]">EMAIL:</span>
               <strong className="text-white bg-[#0f0f0f] px-2 py-0.5 rounded border border-[#353535]">
-                {campaign.daily_sent_count ?? 0} / {campaign.max_daily_limit ?? 50} sent today
+                {campaign.daily_email_sent_count ?? campaign.emails_sent_today ?? 0}/{campaign.max_daily_email_limit ?? 50}
+              </strong>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <MessageSquare className="w-3.5 h-3.5 text-[#37cd84]" />
+              <span className="text-[11px] text-[#797979]">WHATSAPP:</span>
+              <strong className="text-white bg-[#0f0f0f] px-2 py-0.5 rounded border border-[#353535]">
+                {campaign.daily_whatsapp_sent_count ?? campaign.whatsapp_sent_today ?? 0}/{campaign.max_daily_whatsapp_limit ?? 100}
               </strong>
             </div>
           </div>

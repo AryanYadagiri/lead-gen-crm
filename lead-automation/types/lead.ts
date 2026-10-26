@@ -74,6 +74,12 @@ export interface Campaign {
   allowed_days?: string;
   max_daily_limit?: number;
   daily_sent_count?: number;
+  max_daily_email_limit?: number;
+  max_daily_whatsapp_limit?: number;
+  daily_email_sent_count?: number;
+  daily_whatsapp_sent_count?: number;
+  emails_sent_today?: number;
+  whatsapp_sent_today?: number;
 }
 
 export interface TestRunResult {
