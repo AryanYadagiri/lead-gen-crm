@@ -9,6 +9,7 @@ import cc.miab.lead_generation.campaign.dto.SequenceStepRequest;
 import cc.miab.lead_generation.campaign.dto.SequenceStepResponse;
 import cc.miab.lead_generation.campaign.dto.TestRunRequest;
 import cc.miab.lead_generation.campaign.dto.TestRunResponse;
+import cc.miab.lead_generation.campaign.entity.Campaign;
 import cc.miab.lead_generation.campaign.entity.SequenceStep;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
