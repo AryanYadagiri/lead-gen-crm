@@ -80,6 +80,11 @@ export interface Campaign {
   daily_whatsapp_sent_count?: number;
   emails_sent_today?: number;
   whatsapp_sent_today?: number;
+  sender_email?: string;
+  sender_password?: string;
+  sender_name?: string;
+  smtp_host?: string;
+  smtp_port?: number;
 }
 
 export interface TestRunResult {

@@ -43,7 +43,27 @@ public record CampaignRequest(
 
         @JsonAlias({"max_daily_limit", "maxDailyLimit"})
         @JsonProperty("max_daily_limit")
-        Integer maxDailyLimit
+        Integer maxDailyLimit,
+
+        @JsonAlias({"sender_email", "senderEmail", "email"})
+        @JsonProperty("sender_email")
+        String senderEmail,
+
+        @JsonAlias({"sender_password", "senderPassword", "password"})
+        @JsonProperty("sender_password")
+        String senderPassword,
+
+        @JsonAlias({"sender_name", "senderName", "from_name", "fromName"})
+        @JsonProperty("sender_name")
+        String senderName,
+
+        @JsonAlias({"smtp_host", "smtpHost", "host"})
+        @JsonProperty("smtp_host")
+        String smtpHost,
+
+        @JsonAlias({"smtp_port", "smtpPort", "port"})
+        @JsonProperty("smtp_port")
+        Integer smtpPort
 ) {
     public String resolvedAllowedDays() {
         if (allowedDays == null) return null;

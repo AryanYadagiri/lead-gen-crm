@@ -4,7 +4,7 @@ import nodemailer from 'nodemailer';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { to, subject, body: emailBody } = body;
+    const { to, subject, body: emailBody, smtp } = body;
 
     if (!to || !subject || !emailBody) {
       return NextResponse.json(
@@ -13,10 +13,18 @@ export async function POST(request: Request) {
       );
     }
 
-    const host = process.env.SMTP_HOST || 'smtp.hostinger.com';
-    const port = parseInt(process.env.SMTP_PORT || '465', 10);
-    const user = process.env.HOSTINGER_EMAIL || 'sourav@miab.cc';
-    const pass = process.env.HOSTINGER_PASSWORD || 'Miab@2026';
+    const host = smtp?.host?.trim() || process.env.SMTP_HOST || 'smtp.hostinger.com';
+    const port = smtp?.port ? parseInt(String(smtp.port), 10) : parseInt(process.env.SMTP_PORT || '465', 10);
+    const user = smtp?.user?.trim() || process.env.HOSTINGER_EMAIL;
+    const pass = smtp?.pass?.trim() || process.env.HOSTINGER_PASSWORD;
+    const fromName = smtp?.fromName?.trim() || process.env.EMAIL_FROM_NAME || 'MIAB Outreach';
+
+    if (!user || !pass) {
+      return NextResponse.json(
+        { success: false, error: 'Email sender credentials (user & pass) are not configured. Please provide email credentials in campaign settings.' },
+        { status: 400 }
+      );
+    }
 
     const transporter = nodemailer.createTransport({
       host,
@@ -29,7 +37,7 @@ export async function POST(request: Request) {
     });
 
     const info = await transporter.sendMail({
-      from: `"${process.env.EMAIL_FROM_NAME || 'Sourav | MIAB'}" <${user}>`,
+      from: `"${fromName}" <${user}>`,
       to,
       subject,
       text: emailBody,

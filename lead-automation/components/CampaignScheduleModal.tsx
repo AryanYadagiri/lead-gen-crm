@@ -15,8 +15,14 @@ import {
   Zap, 
   RefreshCw,
   Mail,
-  MessageSquare
+  MessageSquare,
+  Lock,
+  Eye,
+  EyeOff,
+  Server,
+  Key
 } from 'lucide-react';
+import { testSmtpConnection } from '../utils/apiClient';
 
 interface CampaignScheduleModalProps {
   isOpen: boolean;
@@ -64,6 +70,17 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
   const [maxDailyWhatsappLimit, setMaxDailyWhatsappLimit] = useState<number>(100);
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
 
+  // Outbound Sender Account state (No hardcoding)
+  const [senderEmail, setSenderEmail] = useState<string>('');
+  const [senderPassword, setSenderPassword] = useState<string>('');
+  const [senderName, setSenderName] = useState<string>('');
+  const [smtpHost, setSmtpHost] = useState<string>('smtp.hostinger.com');
+  const [smtpPort, setSmtpPort] = useState<number>(465);
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [showAdvancedSmtp, setShowAdvancedSmtp] = useState<boolean>(false);
+  const [isTestingSmtp, setIsTestingSmtp] = useState<boolean>(false);
+  const [smtpTestResult, setSmtpTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
   // Synchronize state when campaign prop updates or modal opens
   useEffect(() => {
     if (campaign) {
@@ -75,6 +92,13 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
       const whatsappLimit = campaign.max_daily_whatsapp_limit ?? 100;
       setMaxDailyEmailLimit(emailLimit);
       setMaxDailyWhatsappLimit(whatsappLimit);
+
+      setSenderEmail(campaign.sender_email || '');
+      setSenderPassword(campaign.sender_password || '');
+      setSenderName(campaign.sender_name || '');
+      setSmtpHost(campaign.smtp_host || 'smtp.hostinger.com');
+      setSmtpPort(campaign.smtp_port || 465);
+      setSmtpTestResult(null);
 
       const rawDays = campaign.allowed_days || 'MON,TUE,WED,THU,FRI';
       const parsedDays = rawDays
@@ -196,6 +220,44 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
     setWindowEnd(end);
   };
 
+  const handleTestSmtp = async () => {
+    if (!senderEmail || !senderPassword) {
+      setSmtpTestResult({
+        success: false,
+        message: 'Please provide both Sender Email and Password before testing.',
+      });
+      return;
+    }
+    setIsTestingSmtp(true);
+    setSmtpTestResult(null);
+    try {
+      const res = await testSmtpConnection({
+        user: senderEmail.trim(),
+        pass: senderPassword.trim(),
+        host: smtpHost.trim(),
+        port: smtpPort,
+      });
+      if (res.success) {
+        setSmtpTestResult({
+          success: true,
+          message: res.message || 'SMTP Authentication Verified! Ready for outreach.',
+        });
+      } else {
+        setSmtpTestResult({
+          success: false,
+          message: res.error || 'Connection failed. Please verify credentials.',
+        });
+      }
+    } catch (err: any) {
+      setSmtpTestResult({
+        success: false,
+        message: err?.response?.data?.error || err.message || 'SMTP Connection Test Failed',
+      });
+    } finally {
+      setIsTestingSmtp(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -208,8 +270,13 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
         max_daily_email_limit: maxDailyEmailLimit,
         max_daily_whatsapp_limit: maxDailyWhatsappLimit,
         max_daily_limit: maxDailyEmailLimit,
+        sender_email: senderEmail.trim(),
+        sender_password: senderPassword.trim(),
+        sender_name: senderName.trim(),
+        smtp_host: smtpHost.trim(),
+        smtp_port: smtpPort,
       });
-      setSaveFeedback('Timing & quota guardrails saved successfully!');
+      setSaveFeedback('Outreach settings & sender credentials saved successfully!');
       setTimeout(() => {
         setSaveFeedback(null);
         onClose();
@@ -307,6 +374,144 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
         {/* Modal Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           
+          {/* 0. Outbound Sender Account (User-provided credentials, No hardcoding) */}
+          <div className="space-y-3.5 bg-[#181818] p-4.5 rounded-xl border border-[#2b2b2b] hover:border-[#f36458]/40 transition-colors">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-mono text-[#b9b9b9] flex items-center gap-2">
+                <div className="w-5 h-5 rounded bg-[#f36458]/10 flex items-center justify-center">
+                  <Mail className="w-3.5 h-3.5 text-[#f36458]" />
+                </div>
+                <span className="font-semibold text-white">Outbound Sender Account</span>
+              </label>
+              <span className="text-[10px] font-mono uppercase bg-[#212121] text-[#37cd84] px-2 py-0.5 rounded border border-[#353535]">
+                Dynamic Auth
+              </span>
+            </div>
+            <p className="text-[11px] text-[#8e8e8e]">
+              Enter your email credentials below. Outreach emails are authenticated and sent directly via this mailbox without any hardcoded credentials.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <span className="text-[10px] font-mono text-[#797979] block mb-1">SENDER EMAIL ADDRESS *</span>
+                <input
+                  type="email"
+                  value={senderEmail}
+                  onChange={(e) => setSenderEmail(e.target.value)}
+                  placeholder="e.g. founder@company.com"
+                  className="w-full bg-[#121212] border border-[#353535] rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-[#f36458] transition-colors"
+                  required
+                />
+              </div>
+
+              <div>
+                <span className="text-[10px] font-mono text-[#797979] block mb-1">SENDER DISPLAY NAME</span>
+                <input
+                  type="text"
+                  value={senderName}
+                  onChange={(e) => setSenderName(e.target.value)}
+                  placeholder="e.g. Alex Morgan | Acquired"
+                  className="w-full bg-[#121212] border border-[#353535] rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-[#f36458] transition-colors"
+                />
+              </div>
+            </div>
+
+            <div>
+              <span className="text-[10px] font-mono text-[#797979] block mb-1">MAILBOX PASSWORD OR APP PASSWORD *</span>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={senderPassword}
+                  onChange={(e) => setSenderPassword(e.target.value)}
+                  placeholder="Enter email account password"
+                  className="w-full bg-[#121212] border border-[#353535] rounded-xl px-3.5 py-2 pr-10 text-xs font-mono text-white focus:outline-none focus:border-[#f36458] transition-colors"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#797979] hover:text-white transition-colors cursor-pointer"
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Test Connection Button & Status */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-[#242424]">
+              <button
+                type="button"
+                onClick={handleTestSmtp}
+                disabled={isTestingSmtp || !senderEmail || !senderPassword}
+                className="flex items-center gap-2 bg-[#212121] hover:bg-[#2b2b2b] text-white px-3 py-1.5 rounded-lg text-xs font-mono border border-[#3a3a3a] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isTestingSmtp ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#55beff]" />
+                    <span>Verifying SMTP...</span>
+                  </>
+                ) : (
+                  <>
+                    <Key className="w-3.5 h-3.5 text-[#37cd84]" />
+                    <span>Test SMTP Connection</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowAdvancedSmtp(!showAdvancedSmtp)}
+                className="text-[11px] font-mono text-[#797979] hover:text-white transition-colors flex items-center gap-1 cursor-pointer self-start sm:self-auto"
+              >
+                <Server className="w-3 h-3" />
+                <span>{showAdvancedSmtp ? 'Hide Advanced Host/Port' : 'Custom SMTP Host/Port'}</span>
+              </button>
+            </div>
+
+            {/* Advanced Host & Port Config (Collapsible) */}
+            {showAdvancedSmtp && (
+              <div className="grid grid-cols-2 gap-3 p-3 bg-[#121212] rounded-lg border border-[#2b2b2b] animate-in fade-in duration-150">
+                <div>
+                  <span className="text-[10px] font-mono text-[#797979] block mb-1">SMTP HOST</span>
+                  <input
+                    type="text"
+                    value={smtpHost}
+                    onChange={(e) => setSmtpHost(e.target.value)}
+                    placeholder="smtp.hostinger.com"
+                    className="w-full bg-[#1c1c1c] border border-[#353535] rounded-lg px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-[#55beff]"
+                  />
+                </div>
+                <div>
+                  <span className="text-[10px] font-mono text-[#797979] block mb-1">SMTP PORT (SSL 465 / TLS 587)</span>
+                  <input
+                    type="number"
+                    value={smtpPort}
+                    onChange={(e) => setSmtpPort(Number(e.target.value) || 465)}
+                    placeholder="465"
+                    className="w-full bg-[#1c1c1c] border border-[#353535] rounded-lg px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-[#55beff]"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* SMTP Test Result Alert */}
+            {smtpTestResult && (
+              <div className={`p-2.5 rounded-lg border text-xs font-mono flex items-center gap-2 ${
+                smtpTestResult.success
+                  ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
+                  : 'bg-red-950/30 border-red-500/40 text-red-300'
+              }`}>
+                {smtpTestResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                )}
+                <span className="truncate">{smtpTestResult.message}</span>
+              </div>
+            )}
+          </div>
+
           {/* 1. Timezone Selector */}
           <div className="space-y-2">
             <label className="text-xs font-mono text-[#b9b9b9] flex items-center justify-between">

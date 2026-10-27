@@ -53,6 +53,21 @@ public class Campaign {
     @Column(name = "daily_whatsapp_sent_count")
     private Integer dailyWhatsappSentCount = 0;
 
+    @Column(name = "sender_email")
+    private String senderEmail;
+
+    @Column(name = "sender_password")
+    private String senderPassword;
+
+    @Column(name = "sender_name")
+    private String senderName;
+
+    @Column(name = "smtp_host")
+    private String smtpHost = "smtp.hostinger.com";
+
+    @Column(name = "smtp_port")
+    private Integer smtpPort = 465;
+
     @Column(name = "last_dispatch_date")
     private LocalDate lastDispatchDate;
 
@@ -215,5 +230,45 @@ public class Campaign {
 
     public void setLastDispatchDate(LocalDate lastDispatchDate) {
         this.lastDispatchDate = lastDispatchDate;
+    }
+
+    public String getSenderEmail() {
+        return senderEmail;
+    }
+
+    public void setSenderEmail(String senderEmail) {
+        this.senderEmail = senderEmail;
+    }
+
+    public String getSenderPassword() {
+        return senderPassword;
+    }
+
+    public void setSenderPassword(String senderPassword) {
+        this.senderPassword = senderPassword;
+    }
+
+    public String getSenderName() {
+        return senderName;
+    }
+
+    public void setSenderName(String senderName) {
+        this.senderName = senderName;
+    }
+
+    public String getSmtpHost() {
+        return smtpHost != null ? smtpHost : "smtp.hostinger.com";
+    }
+
+    public void setSmtpHost(String smtpHost) {
+        this.smtpHost = smtpHost;
+    }
+
+    public Integer getSmtpPort() {
+        return smtpPort != null ? smtpPort : 465;
+    }
+
+    public void setSmtpPort(Integer smtpPort) {
+        this.smtpPort = smtpPort;
     }
 }

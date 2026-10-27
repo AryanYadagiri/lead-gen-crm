@@ -300,8 +300,16 @@ class EmailCampaignServiceTest {
 
         service.processTracker(tracker);
 
-        // Verify both Step 1 and Step 2 emails were sent to the same lead
-        verify(emailSenderService, times(2)).sendEmail(eq("multi@example.com"), anyString(), anyString());
+        verify(emailSenderService, times(2)).sendEmail(
+                eq("multi@example.com"),
+                anyString(),
+                anyString(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+        );
         assertEquals("COMPLETED", tracker.getStatus(), "Tracker should complete after both steps are delivered");
     }
 }

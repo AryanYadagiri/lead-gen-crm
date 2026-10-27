@@ -600,6 +600,15 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
       return;
     }
 
+    // Require outbound sender email credentials before launching outreach
+    if (!campaign?.sender_email || !campaign?.sender_password) {
+      console.warn("Process Sequence aborted: email sender credentials not configured");
+      setSyncFeedback('⚠️ Please configure your Outbound Sender Email and Password before launching.');
+      setIsScheduleModalOpen(true);
+      setTimeout(() => setSyncFeedback(null), 5000);
+      return;
+    }
+
     try {
       setIsProcessingAll(true);
       setSyncFeedback(`Syncing latest sequence flow and launching campaign for ${currentQueueData.length} lead(s)...`);
@@ -903,6 +912,30 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
               <span className="text-[10px] bg-[#0c0c0c] text-[#37cd84] px-1.5 py-0.5 rounded border border-[#262626] flex items-center gap-1" title="Daily WhatsApp Quota">
                 <MessageSquare className="w-2.5 h-2.5" />
                 {campaign?.daily_whatsapp_sent_count ?? campaign?.whatsapp_sent_today ?? 0}/{campaign?.max_daily_whatsapp_limit ?? 100}
+              </span>
+            </button>
+
+            {/* Metric Pill: Outbound Sender Account */}
+            <button
+              onClick={() => setIsScheduleModalOpen(true)}
+              className={`h-7 inline-flex items-center gap-1.5 border px-2.5 rounded-md text-[11px] font-mono cursor-pointer transition-colors ${
+                campaign?.sender_email
+                  ? 'bg-[#161616] border-[#2b2b2b] hover:border-[#404040] text-[#a3a3a3] hover:text-white'
+                  : 'bg-amber-950/20 border-amber-500/40 text-amber-300 hover:bg-amber-950/30'
+              }`}
+              title={
+                campaign?.sender_email 
+                  ? `Outbound sender configured: ${campaign.sender_email}. Click to edit.` 
+                  : 'Sender account not configured! Click to set up your email and password.'
+              }
+            >
+              <Mail className={`w-3.5 h-3.5 ${campaign?.sender_email ? 'text-[#37cd84]' : 'text-amber-400'}`} />
+              <span>
+                {campaign?.sender_email ? (
+                  <>Sender: <strong className="text-white font-medium">{campaign.sender_email}</strong></>
+                ) : (
+                  <strong className="text-amber-400 font-medium">⚠️ Sender Not Configured</strong>
+                )}
               </span>
             </button>
           </div>

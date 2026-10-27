@@ -701,8 +701,18 @@ public class EmailCampaignService {
                                 tracker.getCampaignId(), tracker.getId());
                         return;
                     }
+                    Campaign activeCampaign = freshCampaignOpt.get();
 
-                    emailSenderService.sendEmail(tracker.getEmail(), parsedSubject, parsedBody);
+                    emailSenderService.sendEmail(
+                            tracker.getEmail(),
+                            parsedSubject,
+                            parsedBody,
+                            activeCampaign.getSenderEmail(),
+                            activeCampaign.getSenderPassword(),
+                            activeCampaign.getSenderName(),
+                            activeCampaign.getSmtpHost(),
+                            activeCampaign.getSmtpPort()
+                    );
                     recordEmailDispatched(tracker.getCampaignId());
                     logger.info("Dispatched step {} email for campaign {} to {}",
                             tracker.getCurrentStepOrder(), tracker.getCampaignId(), tracker.getEmail());
@@ -888,7 +898,16 @@ public class EmailCampaignService {
                             stepNum + 1, stepNum, email, verification != null ? verification.diagnosis() : "Validation failed"));
                 } else if (sendActualEmail && email != null && email.contains("@")) {
                     try {
-                        emailSenderService.sendEmail(email, parsedSubject, parsedBody);
+                        emailSenderService.sendEmail(
+                                email,
+                                parsedSubject,
+                                parsedBody,
+                                campaign.getSenderEmail(),
+                                campaign.getSenderPassword(),
+                                campaign.getSenderName(),
+                                campaign.getSmtpHost(),
+                                campaign.getSmtpPort()
+                        );
                         logs.add(String.format("[09:%02d AM] Step %d Delivered to %s! Subject: \"%s\"",
                                 stepNum + 2, stepNum, email, parsedSubject));
                     } catch (Exception ex) {
@@ -1121,9 +1140,32 @@ public class EmailCampaignService {
                 request.resolvedMaxDailyEmailLimit(),
                 request.resolvedMaxDailyWhatsappLimit()
         );
+
+        if (request.senderEmail() != null && !request.senderEmail().isBlank()) {
+            campaign.setSenderEmail(request.senderEmail().trim());
+            campaign.setSenderPassword(request.senderPassword() != null ? request.senderPassword().trim() : null);
+            campaign.setSenderName(request.senderName() != null ? request.senderName().trim() : null);
+            campaign.setSmtpHost(request.smtpHost() != null ? request.smtpHost().trim() : "smtp.hostinger.com");
+            campaign.setSmtpPort(request.smtpPort() != null ? request.smtpPort() : 465);
+        } else {
+            // Carry over sender credentials from latest existing campaign if present
+            List<Campaign> all = campaignRepository.findAll();
+            for (int i = all.size() - 1; i >= 0; i--) {
+                Campaign c = all.get(i);
+                if (c.getSenderEmail() != null && !c.getSenderEmail().isBlank()) {
+                    campaign.setSenderEmail(c.getSenderEmail());
+                    campaign.setSenderPassword(c.getSenderPassword());
+                    campaign.setSenderName(c.getSenderName());
+                    campaign.setSmtpHost(c.getSmtpHost());
+                    campaign.setSmtpPort(c.getSmtpPort());
+                    break;
+                }
+            }
+        }
+
         Campaign saved = campaignRepository.save(campaign);
-        logger.info("Created campaign ID {} with name '{}', window=[{}-{}], timezone={}, days={}, emailLimit={}, whatsappLimit={}",
-                saved.getId(), saved.getName(), saved.getSendingWindowStart(), saved.getSendingWindowEnd(),
+        logger.info("Created campaign ID {} with name '{}', sender='{}', window=[{}-{}], timezone={}, days={}, emailLimit={}, whatsappLimit={}",
+                saved.getId(), saved.getName(), saved.getSenderEmail(), saved.getSendingWindowStart(), saved.getSendingWindowEnd(),
                 saved.getTimezone(), saved.getAllowedDays(), saved.getMaxDailyEmailLimit(), saved.getMaxDailyWhatsappLimit());
         return saved;
     }
@@ -1162,9 +1204,24 @@ public class EmailCampaignService {
         if (request.maxDailyLimit() != null && request.maxDailyLimit() > 0 && request.maxDailyEmailLimit() == null) {
             campaign.setMaxDailyLimit(request.maxDailyLimit());
         }
+        if (request.senderEmail() != null) {
+            campaign.setSenderEmail(request.senderEmail().trim());
+        }
+        if (request.senderPassword() != null) {
+            campaign.setSenderPassword(request.senderPassword().trim());
+        }
+        if (request.senderName() != null) {
+            campaign.setSenderName(request.senderName().trim());
+        }
+        if (request.smtpHost() != null && !request.smtpHost().isBlank()) {
+            campaign.setSmtpHost(request.smtpHost().trim());
+        }
+        if (request.smtpPort() != null && request.smtpPort() > 0) {
+            campaign.setSmtpPort(request.smtpPort());
+        }
         Campaign saved = campaignRepository.save(campaign);
-        logger.info("Updated campaign ID {} configuration: status={}, window=[{}-{}], timezone={}, days={}, emailLimit={}, whatsappLimit={}",
-                saved.getId(), saved.getStatus(), saved.getSendingWindowStart(), saved.getSendingWindowEnd(),
+        logger.info("Updated campaign ID {} configuration: status={}, sender='{}', window=[{}-{}], timezone={}, days={}, emailLimit={}, whatsappLimit={}",
+                saved.getId(), saved.getStatus(), saved.getSenderEmail(), saved.getSendingWindowStart(), saved.getSendingWindowEnd(),
                 saved.getTimezone(), saved.getAllowedDays(), saved.getMaxDailyEmailLimit(), saved.getMaxDailyWhatsappLimit());
         return saved;
     }

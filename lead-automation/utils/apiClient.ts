@@ -313,6 +313,11 @@ export const updateCampaignSettings = async (
     max_daily_limit?: number;
     max_daily_email_limit?: number;
     max_daily_whatsapp_limit?: number;
+    sender_email?: string;
+    sender_password?: string;
+    sender_name?: string;
+    smtp_host?: string;
+    smtp_port?: number;
   }>
 ): Promise<Campaign> => {
   console.log(`[API] Updating campaign #${campaignId} settings:`, settings);
@@ -323,6 +328,33 @@ export const updateCampaignSettings = async (
   } catch (err) {
     console.error(`[API] PUT /api/campaigns/${campaignId} failed:`, err);
     throw err;
+  }
+};
+
+/**
+ * Tests SMTP credentials via /api/email/test or backend /api/email/test-smtp
+ */
+export const testSmtpConnection = async (credentials: {
+  user: string;
+  pass: string;
+  host?: string;
+  port?: number;
+}): Promise<{ success: boolean; message?: string; error?: string }> => {
+  try {
+    const res = await fetch('/api/email/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(credentials),
+    });
+    const data = await res.json();
+    return data;
+  } catch (localErr) {
+    console.warn('[API] Local /api/email/test failed, trying backend /api/email/test-smtp:', localErr);
+    const response = await apiClient.post<{ success: boolean; message?: string; error?: string }>(
+      '/api/email/test-smtp',
+      credentials
+    );
+    return response.data;
   }
 };
 

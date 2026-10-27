@@ -47,7 +47,22 @@ public record CampaignResponse(
         Integer maxDailyLimit,
 
         @JsonProperty("daily_sent_count")
-        Integer dailySentCount
+        Integer dailySentCount,
+
+        @JsonProperty("sender_email")
+        String senderEmail,
+
+        @JsonProperty("sender_password")
+        String senderPassword,
+
+        @JsonProperty("sender_name")
+        String senderName,
+
+        @JsonProperty("smtp_host")
+        String smtpHost,
+
+        @JsonProperty("smtp_port")
+        Integer smtpPort
 ) {
     public static CampaignResponse from(Campaign campaign) {
         if (campaign == null) {
@@ -68,7 +83,12 @@ public record CampaignResponse(
                 campaign.getEmailsSentToday(),
                 campaign.getWhatsappSentToday(),
                 campaign.getMaxDailyLimit(),
-                campaign.getDailySentCount()
+                campaign.getDailySentCount(),
+                campaign.getSenderEmail(),
+                campaign.getSenderPassword(),
+                campaign.getSenderName(),
+                campaign.getSmtpHost(),
+                campaign.getSmtpPort()
         );
     }
 }
