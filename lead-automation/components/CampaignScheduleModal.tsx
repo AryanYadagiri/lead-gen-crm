@@ -397,7 +397,21 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
                 <input
                   type="email"
                   value={senderEmail}
-                  onChange={(e) => setSenderEmail(e.target.value)}
+                  onChange={(e) => {
+                    const newEmail = e.target.value;
+                    setSenderEmail(newEmail);
+                    const domain = newEmail.includes('@') ? newEmail.split('@')[1]?.toLowerCase().trim() : '';
+                    if (domain === 'gmail.com' || domain === 'googlemail.com') {
+                      setSmtpHost('smtp.gmail.com');
+                      setSmtpPort(587);
+                    } else if (domain === 'outlook.com' || domain === 'hotmail.com' || domain === 'office365.com') {
+                      setSmtpHost('smtp.office365.com');
+                      setSmtpPort(587);
+                    } else if (domain === 'zoho.com' || domain === 'zoho.in') {
+                      setSmtpHost('smtp.zoho.com');
+                      setSmtpPort(465);
+                    }
+                  }}
                   placeholder="e.g. founder@company.com"
                   className="w-full bg-[#121212] border border-[#353535] rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-[#f36458] transition-colors"
                   required
@@ -410,7 +424,7 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
                   type="text"
                   value={senderName}
                   onChange={(e) => setSenderName(e.target.value)}
-                  placeholder="e.g. Alex Morgan | Acquired"
+                  placeholder="e.g. Alex Morgan | Company"
                   className="w-full bg-[#121212] border border-[#353535] rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-[#f36458] transition-colors"
                 />
               </div>
@@ -438,6 +452,63 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
               </div>
             </div>
 
+            {/* SMTP Server Configuration */}
+            <div className="p-3 bg-[#121212] rounded-xl border border-[#2b2b2b] space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono text-[#a0a0a0] flex items-center gap-1.5 font-bold uppercase tracking-wider">
+                  <Server className="w-3.5 h-3.5 text-[#55beff]" /> Custom SMTP Server Configuration
+                </span>
+                <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                  <button
+                    type="button"
+                    onClick={() => { setSmtpHost('smtp.hostinger.com'); setSmtpPort(465); }}
+                    className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${smtpHost === 'smtp.hostinger.com' ? 'bg-[#353535] text-white font-bold' : 'text-[#797979] hover:text-white'}`}
+                  >
+                    Hostinger
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSmtpHost('smtp.gmail.com'); setSmtpPort(587); }}
+                    className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${smtpHost === 'smtp.gmail.com' ? 'bg-[#353535] text-white font-bold' : 'text-[#797979] hover:text-white'}`}
+                  >
+                    Gmail
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSmtpHost('smtp.office365.com'); setSmtpPort(587); }}
+                    className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${smtpHost === 'smtp.office365.com' ? 'bg-[#353535] text-white font-bold' : 'text-[#797979] hover:text-white'}`}
+                  >
+                    Outlook
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="sm:col-span-2">
+                  <span className="text-[10px] font-mono text-[#797979] block mb-1">SMTP HOST SERVER *</span>
+                  <input
+                    type="text"
+                    value={smtpHost}
+                    onChange={(e) => setSmtpHost(e.target.value)}
+                    placeholder="e.g. smtp.hostinger.com or mail.yourdomain.com"
+                    className="w-full bg-[#1c1c1c] border border-[#353535] rounded-lg px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-[#55beff]"
+                    required
+                  />
+                </div>
+                <div>
+                  <span className="text-[10px] font-mono text-[#797979] block mb-1">PORT (SSL 465 / TLS 587) *</span>
+                  <input
+                    type="number"
+                    value={smtpPort}
+                    onChange={(e) => setSmtpPort(Number(e.target.value) || 465)}
+                    placeholder="465"
+                    className="w-full bg-[#1c1c1c] border border-[#353535] rounded-lg px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-[#55beff]"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
             {/* Test Connection Button & Status */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-[#242424]">
               <button
@@ -459,41 +530,10 @@ export const CampaignScheduleModal: React.FC<CampaignScheduleModalProps> = ({
                 )}
               </button>
 
-              <button
-                type="button"
-                onClick={() => setShowAdvancedSmtp(!showAdvancedSmtp)}
-                className="text-[11px] font-mono text-[#797979] hover:text-white transition-colors flex items-center gap-1 cursor-pointer self-start sm:self-auto"
-              >
-                <Server className="w-3 h-3" />
-                <span>{showAdvancedSmtp ? 'Hide Advanced Host/Port' : 'Custom SMTP Host/Port'}</span>
-              </button>
+              <span className="text-[11px] font-mono text-[#797979]">
+                Tested via port {smtpPort} on {smtpHost || 'custom host'}
+              </span>
             </div>
-
-            {/* Advanced Host & Port Config (Collapsible) */}
-            {showAdvancedSmtp && (
-              <div className="grid grid-cols-2 gap-3 p-3 bg-[#121212] rounded-lg border border-[#2b2b2b] animate-in fade-in duration-150">
-                <div>
-                  <span className="text-[10px] font-mono text-[#797979] block mb-1">SMTP HOST</span>
-                  <input
-                    type="text"
-                    value={smtpHost}
-                    onChange={(e) => setSmtpHost(e.target.value)}
-                    placeholder="smtp.hostinger.com"
-                    className="w-full bg-[#1c1c1c] border border-[#353535] rounded-lg px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-[#55beff]"
-                  />
-                </div>
-                <div>
-                  <span className="text-[10px] font-mono text-[#797979] block mb-1">SMTP PORT (SSL 465 / TLS 587)</span>
-                  <input
-                    type="number"
-                    value={smtpPort}
-                    onChange={(e) => setSmtpPort(Number(e.target.value) || 465)}
-                    placeholder="465"
-                    className="w-full bg-[#1c1c1c] border border-[#353535] rounded-lg px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-[#55beff]"
-                  />
-                </div>
-              </div>
-            )}
 
             {/* SMTP Test Result Alert */}
             {smtpTestResult && (

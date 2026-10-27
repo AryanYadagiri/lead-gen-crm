@@ -189,6 +189,8 @@ class EmailCampaignServiceTest {
         Long campaignId = 1L;
         Campaign campaign = new Campaign("Test Campaign", "COMPLETED");
         campaign.setId(campaignId);
+        campaign.setSenderEmail("outreach@test.com");
+        campaign.setSenderPassword("secret");
 
         when(campaignRepository.findById(campaignId)).thenReturn(Optional.of(campaign));
         when(sequenceStepRepository.findByCampaignIdOrderByStepOrderAsc(campaignId)).thenReturn(java.util.List.of(
@@ -217,6 +219,56 @@ class EmailCampaignServiceTest {
         verify(campaignRepository).saveAndFlush(campaign);
         verify(sequenceStepRepository).findByCampaignIdOrderByStepOrderAsc(campaignId);
         verify(trackerRepository).saveAllAndFlush(any());
+    }
+
+    @Test
+    void testProcessCampaignTrackersImmediately_MissingCredentials_RejectsAndRemainsDraft() {
+        Long campaignId = 2L;
+        Campaign campaign = new Campaign("Draft Campaign", "DRAFT");
+        campaign.setId(campaignId);
+        // No sender email or password set
+
+        when(campaignRepository.findById(campaignId)).thenReturn(Optional.of(campaign));
+        when(sequenceStepRepository.findByCampaignIdOrderByStepOrderAsc(campaignId)).thenReturn(java.util.List.of(
+                new cc.miab.lead_generation.campaign.entity.SequenceStep(campaignId, 1, "email", "Step 1", 0, "Subject", "Body", true)
+        ));
+
+        org.springframework.web.server.ResponseStatusException ex = assertThrows(
+                org.springframework.web.server.ResponseStatusException.class,
+                () -> service.processCampaignTrackersImmediately(campaignId)
+        );
+
+        assertTrue(ex.getReason().contains("Outbound sender email and password must be configured"));
+        assertEquals("DRAFT", campaign.getStatus(), "Campaign status must remain DRAFT on credential failure");
+        verify(campaignRepository, never()).saveAndFlush(campaign);
+    }
+
+    @Test
+    void testProcessCampaignTrackersImmediately_SmtpAuthFailed_RejectsAndRemainsDraft() {
+        Long campaignId = 3L;
+        Campaign campaign = new Campaign("Draft Campaign", "DRAFT");
+        campaign.setId(campaignId);
+        campaign.setSenderEmail("bad@example.com");
+        campaign.setSenderPassword("wrongpass");
+
+        when(campaignRepository.findById(campaignId)).thenReturn(Optional.of(campaign));
+        when(sequenceStepRepository.findByCampaignIdOrderByStepOrderAsc(campaignId)).thenReturn(java.util.List.of(
+                new cc.miab.lead_generation.campaign.entity.SequenceStep(campaignId, 1, "email", "Step 1", 0, "Subject", "Body", true)
+        ));
+
+        doThrow(new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.BAD_REQUEST,
+                "SMTP Authentication Failed: 535 Invalid login"
+        )).when(emailSenderService).validateSmtpCredentials(any(), any(), eq("bad@example.com"), eq("wrongpass"));
+
+        org.springframework.web.server.ResponseStatusException ex = assertThrows(
+                org.springframework.web.server.ResponseStatusException.class,
+                () -> service.processCampaignTrackersImmediately(campaignId)
+        );
+
+        assertTrue(ex.getReason().contains("SMTP Authentication Failed: 535 Invalid login"));
+        assertEquals("DRAFT", campaign.getStatus(), "Campaign status must remain DRAFT on auth failure");
+        verify(campaignRepository, never()).saveAndFlush(campaign);
     }
 
     @Test

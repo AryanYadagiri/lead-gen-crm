@@ -24,7 +24,7 @@ import {
   Send, CheckCheck, Smartphone, Info, Play, CheckCircle2, ShieldAlert,
   ChevronRight, Users, Settings2, Code, Eye, RefreshCw, Server, Check, 
   AlertCircle, FileSpreadsheet, Upload, Zap, Clock, Pause, AlertTriangle,
-  Calendar, Globe, Sliders, ShieldCheck, RotateCcw
+  Calendar, Globe, Sliders, ShieldCheck, RotateCcw, X
 } from 'lucide-react';
 
 interface OutreachEngineViewProps {
@@ -79,6 +79,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   const [isDeletingCampaign, setIsDeletingCampaign] = useState<boolean>(false);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState<boolean>(false);
   const [isSavingSchedule, setIsSavingSchedule] = useState<boolean>(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -364,8 +365,9 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
 
   const campaignStatus = campaign?.status?.toUpperCase() || '';
   const allTrackersDone = serverTrackers.length > 0 && serverTrackers.every((t) => t.status !== 'PENDING');
+  const hasPendingTrackers = serverTrackers.length > 0 && serverTrackers.some((t) => t.status === 'PENDING');
   const isCampaignCompleted = campaignStatus === 'COMPLETED' || campaignStatus === 'FINISHED' || (allTrackersDone && !isProcessingAll);
-  const isCampaignRunning = !isCampaignCompleted && (campaignStatus === 'RUNNING' || campaignStatus === 'PROCESSING' || campaignStatus === 'ACTIVE');
+  const isCampaignRunning = !isCampaignCompleted && (campaignStatus === 'RUNNING' || campaignStatus === 'PROCESSING') && (hasPendingTrackers || isProcessingAll);
   const isCampaignPaused = !isCampaignCompleted && campaignStatus === 'PAUSED';
 
   // ---------------------------------------------------------------------------
@@ -603,13 +605,13 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     // Require outbound sender email credentials before launching outreach
     if (!campaign?.sender_email || !campaign?.sender_password) {
       console.warn("Process Sequence aborted: email sender credentials not configured");
-      setSyncFeedback('⚠️ Please configure your Outbound Sender Email and Password before launching.');
+      setLaunchError('Sender credentials required: Please connect your custom outbound email address and SMTP password before launching.');
       setIsScheduleModalOpen(true);
-      setTimeout(() => setSyncFeedback(null), 5000);
       return;
     }
 
     try {
+      setLaunchError(null);
       setIsProcessingAll(true);
       setSyncFeedback(`Syncing latest sequence flow and launching campaign for ${currentQueueData.length} lead(s)...`);
       
@@ -629,7 +631,7 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
       // Reset serverTrackers locally if re-running sequence so completion state transitions cleanly
       setServerTrackers(prev => prev.map(t => ({ ...t, status: 'PENDING', currentStepOrder: 1 })));
 
-      // PART 2.4: Synchronous update on click - immediately flip local campaign state without refresh
+      // Synchronous update on click - immediately flip local campaign state without refresh
       setCampaign(prev => prev ? { ...prev, status: 'RUNNING' } : null);
 
       setSyncFeedback(result.message || 'Campaign launched! Outreach sequence active.');
@@ -662,12 +664,10 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     } catch (err: any) {
       console.error('Immediate execution failed:', err);
       setIsProcessingAll(false);
-      const errMsg = err.response?.data?.message || err.message || 'Execution error';
-      if (typeof errMsg === 'string' && (errMsg.includes('already running') || errMsg.includes('already active'))) {
-        setCampaign(prev => prev ? { ...prev, status: 'RUNNING' } : null);
-      }
-      setSyncFeedback(`Dispatch error: ${errMsg}`);
-      setTimeout(() => setSyncFeedback(null), 4000);
+      const errMsg = err.response?.data?.message || err.response?.data?.error || err.message || 'Execution error';
+      setLaunchError(errMsg);
+      setSyncFeedback(`Launch blocked: ${errMsg}`);
+      setTimeout(() => setSyncFeedback(null), 6000);
     }
   }, [campaign, isCampaignRunning, isCampaignPaused, queueTargets, enrolledLeads, currentQueueData, refreshEnrolledTrackers, onRefreshQueue]);
 
@@ -844,6 +844,28 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                     ? 'COMPLETED' 
                     : (campaign.status?.toUpperCase() || 'READY')}
                 </span>
+
+                {campaign.sender_email ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsScheduleModalOpen(true)}
+                    title="Click to view or edit connected custom domain email and SMTP credentials"
+                    className="bg-[#15241b] hover:bg-[#1a3023] text-[#37cd84] border border-[#37cd84]/30 text-[10px] font-mono px-2 py-0.5 rounded flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Mail className="w-3 h-3 text-[#37cd84]" />
+                    <span>From: {campaign.sender_email}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsScheduleModalOpen(true)}
+                    title="Connect custom domain sender email & SMTP password"
+                    className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-mono px-2 py-0.5 rounded flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Mail className="w-3 h-3 text-amber-400" />
+                    <span>Connect Sender Email</span>
+                  </button>
+                )}
               </div>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
@@ -1063,6 +1085,49 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Visual Badge/Banner: Launch or SMTP Authentication Error */}
+      {launchError && (
+        <div className="bg-red-950/40 border border-red-500/50 text-red-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in duration-200 shadow-lg shadow-red-950/20">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-lg bg-red-500/20 flex items-center justify-center shrink-0 border border-red-500/30 text-red-400 mt-0.5 sm:mt-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-red-300 font-sans tracking-tight flex items-center gap-2">
+                <span>Campaign Launch Blocked</span>
+                <span className="bg-red-500/20 text-red-300 text-[10px] font-mono px-2 py-0.5 rounded border border-red-500/30 uppercase">
+                  Authentication Failed
+                </span>
+              </div>
+              <div className="text-xs text-red-200/90 font-mono mt-1 break-words">
+                {launchError}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 self-end sm:self-center">
+            <button
+              type="button"
+              onClick={() => {
+                setLaunchError(null);
+                setIsScheduleModalOpen(true);
+              }}
+              className="flex-1 sm:flex-none px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 hover:text-white text-xs font-mono rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              <span>Configure Email & SMTP</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setLaunchError(null)}
+              className="p-1.5 text-red-400 hover:text-red-200 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+              title="Dismiss error"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Visual Badge/Banner: Campaign Completed */}
       {isCampaignCompleted && (

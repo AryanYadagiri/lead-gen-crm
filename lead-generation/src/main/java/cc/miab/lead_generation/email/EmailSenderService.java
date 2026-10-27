@@ -10,6 +10,11 @@ import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.server.ResponseStatusException;
+
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -18,6 +23,7 @@ import java.util.Properties;
 public class EmailSenderService {
 
     private static final Logger logger = LoggerFactory.getLogger(EmailSenderService.class);
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     private final JavaMailSender defaultMailSender;
     private final String defaultFromEmail;
@@ -99,6 +105,10 @@ public class EmailSenderService {
                     logger.info("Successfully delivered email to {} via HTTPS relay", to);
                     return "Email campaign successful";
                 }
+            } catch (RestClientResponseException rex) {
+                String errorMsg = extractErrorMessage(rex.getResponseBodyAsString(), rex.getMessage());
+                logger.error("HTTPS relay email send failed with status {}: {}", rex.getStatusCode(), errorMsg);
+                throw new IllegalStateException("SMTP Relay Error: " + errorMsg, rex);
             } catch (Exception ex) {
                 logger.warn("HTTPS relay to {} encountered issue: {}. Falling back to direct SMTP...", relayUrl, ex.getMessage());
             }
@@ -125,39 +135,75 @@ public class EmailSenderService {
         }
     }
 
-    public boolean testConnection(String host, int port, String user, String pass) {
-        String testHost = (host != null && !host.isBlank()) ? host.trim() : "smtp.hostinger.com";
-        int testPort = port > 0 ? port : 465;
-        if (user == null || user.isBlank() || pass == null || pass.isBlank()) {
-            return false;
+    /**
+     * Synchronously validates SMTP credentials and throws a clear ResponseStatusException with specific error details on failure.
+     */
+    public void validateSmtpCredentials(String host, Integer port, String user, String pass) {
+        if (user == null || user.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Sender email address is not configured. Please enter your email in Campaign Settings.");
         }
+        if (pass == null || pass.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Sender password / App Password is not configured. Please enter your password in Campaign Settings.");
+        }
+        String testHost = (host != null && !host.isBlank()) ? host.trim() : "smtp.hostinger.com";
+        int testPort = (port != null && port > 0) ? port : 465;
 
-        // Test via relay if available
+        // 1. Primary validation via Vercel HTTPS Relay (port 443, reliable from Render)
         if (relayUrl != null && !relayUrl.isBlank()) {
             try {
-                String testUrl = relayUrl.endsWith("/api/email") ? relayUrl + "/test" : relayUrl;
+                String testUrl = relayUrl.endsWith("/api/email") ? relayUrl + "/test" : (relayUrl + "/test");
                 var res = restClient.post()
                         .uri(testUrl)
                         .body(Map.of("host", testHost, "port", testPort, "user", user.trim(), "pass", pass.trim()))
                         .retrieve()
                         .toBodilessEntity();
                 if (res.getStatusCode().is2xxSuccessful()) {
-                    return true;
+                    logger.info("SMTP credentials validated successfully via relay for {}", user);
+                    return;
                 }
+            } catch (RestClientResponseException rex) {
+                String errorMsg = extractErrorMessage(rex.getResponseBodyAsString(), rex.getMessage());
+                logger.warn("SMTP validation failed via relay: {}", errorMsg);
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "SMTP Authentication Failed: " + errorMsg);
             } catch (Exception e) {
-                logger.warn("Relay test connection failed, testing direct: {}", e.getMessage());
+                logger.warn("Relay validation connection issue: {}. Attempting direct SMTP validation...", e.getMessage());
             }
         }
 
-        // Fallback test via JavaMailSenderImpl
+        // 2. Fallback validation via direct SMTP
         try {
             JavaMailSenderImpl impl = (JavaMailSenderImpl) createDynamicSender(testHost, testPort, user.trim(), pass.trim());
             impl.testConnection();
+            logger.info("SMTP credentials validated successfully via direct connection for {}", user);
+        } catch (Exception directEx) {
+            logger.error("Direct SMTP test connection failed for {}: {}", user, directEx.getMessage());
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "SMTP Authentication Failed: " + directEx.getMessage());
+        }
+    }
+
+    public boolean testConnection(String host, int port, String user, String pass) {
+        try {
+            validateSmtpCredentials(host, port, user, pass);
             return true;
         } catch (Exception e) {
-            logger.warn("Direct SMTP test connection failed: {}", e.getMessage());
             return false;
         }
+    }
+
+    private String extractErrorMessage(String responseBody, String defaultMsg) {
+        if (responseBody != null && !responseBody.isBlank()) {
+            try {
+                Map<?, ?> map = objectMapper.readValue(responseBody, Map.class);
+                if (map.containsKey("error") && map.get("error") != null) {
+                    return String.valueOf(map.get("error"));
+                }
+                if (map.containsKey("message") && map.get("message") != null) {
+                    return String.valueOf(map.get("message"));
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return defaultMsg;
     }
 
     private JavaMailSender createDynamicSender(String host, int port, String username, String password) {

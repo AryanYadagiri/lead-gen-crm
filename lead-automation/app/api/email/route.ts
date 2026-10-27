@@ -34,10 +34,15 @@ export async function POST(request: Request) {
         user,
         pass,
       },
+      tls: {
+        rejectUnauthorized: false,
+      },
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
     });
 
     const info = await transporter.sendMail({
-      from: `"${fromName}" <${user}>`,
+      from: fromName ? `"${fromName}" <${user}>` : user,
       to,
       subject,
       text: emailBody,

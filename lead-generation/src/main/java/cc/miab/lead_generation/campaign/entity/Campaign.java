@@ -21,7 +21,7 @@ public class Campaign {
     private String name;
 
     @Column(nullable = false)
-    private String status = "READY"; // "READY", "RUNNING", "PAUSED", "COMPLETED"
+    private String status = "DRAFT"; // "DRAFT", "READY", "RUNNING", "PAUSED", "COMPLETED"
 
     @Column(name = "sending_window_start", length = 10)
     private String sendingWindowStart = "09:00";

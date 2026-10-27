@@ -22,8 +22,11 @@ export async function POST(request: Request) {
         user: user.trim(),
         pass: pass.trim(),
       },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
+      tls: {
+        rejectUnauthorized: false,
+      },
+      connectionTimeout: 12000,
+      greetingTimeout: 12000,
     });
 
     await transporter.verify();

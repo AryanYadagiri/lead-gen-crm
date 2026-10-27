@@ -108,7 +108,7 @@ public class EmailCampaignService {
         logger.info("No campaign found. Initializing default automated outreach campaign...");
         Campaign defaultCampaign = campaignRepository.save(new Campaign(
                 "Automated Outreach Sequence Studio",
-                "READY",
+                "DRAFT",
                 "09:00",
                 "17:00",
                 "Asia/Kolkata",
@@ -522,11 +522,6 @@ public class EmailCampaignService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Campaign is paused. Please resume before starting.");
         }
 
-        // 3. State Persist: Explicitly set status to RUNNING in DB to lock simultaneous requests
-        campaign.setStatus("RUNNING");
-        campaignRepository.saveAndFlush(campaign);
-        logger.info("Persisted campaign ID {} status to RUNNING in database to lock simultaneous execution.", campaignId);
-
         // Freshness Guarantee 1: Fetch latest sequence steps linked to the campaign in database
         List<SequenceStep> currentSteps = sequenceStepRepository.findByCampaignIdOrderByStepOrderAsc(campaignId);
         logger.info("Freshness guarantee: Verified {} latest sequence step(s) for campaign ID {}", currentSteps.size(), campaignId);
@@ -534,6 +529,31 @@ public class EmailCampaignService {
             logger.warn("No sequence steps found for campaign ID {}. Cannot launch campaign without sequence steps.", campaignId);
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot launch campaign without sequence steps");
         }
+
+        // Pre-flight SMTP Authentication Check: Authenticate sender credentials before setting campaign to RUNNING
+        boolean hasEmailSteps = currentSteps.stream().anyMatch(s -> "email".equalsIgnoreCase(s.getChannel()));
+        if (hasEmailSteps) {
+            if (campaign.getSenderEmail() == null || campaign.getSenderEmail().isBlank() ||
+                campaign.getSenderPassword() == null || campaign.getSenderPassword().isBlank()) {
+                logger.warn("Campaign ID {} lacks sender email or password. Rejecting launch.", campaignId);
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Outbound sender email and password must be configured in Settings before launching outreach.");
+            }
+            logger.info("Pre-flight validating SMTP credentials for sender '{}' at {}:{}...",
+                    campaign.getSenderEmail(), campaign.getSmtpHost(), campaign.getSmtpPort());
+            emailSenderService.validateSmtpCredentials(
+                    campaign.getSmtpHost(),
+                    campaign.getSmtpPort(),
+                    campaign.getSenderEmail(),
+                    campaign.getSenderPassword()
+            );
+            logger.info("Pre-flight SMTP validation passed for sender '{}'.", campaign.getSenderEmail());
+        }
+
+        // 3. State Persist: Explicitly set status to RUNNING in DB only after pre-flight validation succeeds
+        campaign.setStatus("RUNNING");
+        campaignRepository.saveAndFlush(campaign);
+        logger.info("Persisted campaign ID {} status to RUNNING in database to lock simultaneous execution.", campaignId);
 
         // 4. Purge any duplicate trackers in trackerRepository for this campaign so each email has at most one tracker
         List<LeadSequenceTracker> existingTrackers = trackerRepository.findByCampaignId(campaignId);
@@ -1115,10 +1135,7 @@ public class EmailCampaignService {
 
     @Transactional
     public Campaign createCampaign(String name, String status) {
-        String resolvedStatus = (status == null || status.isBlank()) ? "READY" : status;
-        if ("ACTIVE".equalsIgnoreCase(resolvedStatus)) {
-            resolvedStatus = "RUNNING";
-        }
+        String resolvedStatus = (status == null || status.isBlank()) ? "DRAFT" : status.trim().toUpperCase();
         Campaign saved = campaignRepository.save(new Campaign(name, resolvedStatus));
         logger.info("Created campaign ID {} with name '{}', status '{}'", saved.getId(), saved.getName(), saved.getStatus());
         return saved;
@@ -1126,10 +1143,7 @@ public class EmailCampaignService {
 
     @Transactional
     public Campaign createCampaign(CampaignRequest request) {
-        String resolvedStatus = (request.status() == null || request.status().isBlank()) ? "READY" : request.status();
-        if ("ACTIVE".equalsIgnoreCase(resolvedStatus)) {
-            resolvedStatus = "RUNNING";
-        }
+        String resolvedStatus = (request.status() == null || request.status().isBlank()) ? "DRAFT" : request.status().trim().toUpperCase();
         Campaign campaign = new Campaign(
                 request.name() != null ? request.name() : "Automated Outreach Sequence Studio",
                 resolvedStatus,
@@ -1239,10 +1253,7 @@ public class EmailCampaignService {
     @Transactional
     public Campaign updateCampaignStatus(Long campaignId, String status) {
         Campaign campaign = getCampaign(campaignId);
-        String resolvedStatus = (status != null && !status.isBlank()) ? status.trim().toUpperCase() : "RUNNING";
-        if ("ACTIVE".equalsIgnoreCase(resolvedStatus)) {
-            resolvedStatus = "RUNNING";
-        }
+        String resolvedStatus = (status != null && !status.isBlank()) ? status.trim().toUpperCase() : campaign.getStatus();
         campaign.setStatus(resolvedStatus);
         Campaign saved = campaignRepository.save(campaign);
         logger.info("Updated campaign ID {} status to {}", saved.getId(), saved.getStatus());
