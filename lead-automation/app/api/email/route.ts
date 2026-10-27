@@ -15,8 +15,8 @@ export async function POST(request: Request) {
 
     const host = process.env.SMTP_HOST || 'smtp.hostinger.com';
     const port = parseInt(process.env.SMTP_PORT || '465', 10);
-    const user = process.env.HOSTINGER_EMAIL || 'aryan@miabagency.com';
-    const pass = process.env.HOSTINGER_PASSWORD || 'Miabagency1@@';
+    const user = process.env.HOSTINGER_EMAIL || 'sourav@miab.cc';
+    const pass = process.env.HOSTINGER_PASSWORD || 'Miab@2026';
 
     const transporter = nodemailer.createTransport({
       host,
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     });
 
     const info = await transporter.sendMail({
-      from: `"${process.env.EMAIL_FROM_NAME || 'Aryan | MIAB Agency'}" <${user}>`,
+      from: `"${process.env.EMAIL_FROM_NAME || 'Sourav | MIAB'}" <${user}>`,
       to,
       subject,
       text: emailBody,

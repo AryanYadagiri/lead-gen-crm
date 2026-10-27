@@ -22,7 +22,7 @@ public class EmailSenderService {
     private final RestClient restClient;
 
     public EmailSenderService(JavaMailSender mailSender,
-                              @Value("${spring.mail.username:aryan@miabagency.com}") String fromEmail,
+                              @Value("${spring.mail.username:sourav@miab.cc}") String fromEmail,
                               @Value("${email.relay.url:https://lead-gen-crm-five.vercel.app/api/email}") String relayUrl) {
         this.mailSender = mailSender;
         this.fromEmail = fromEmail;
