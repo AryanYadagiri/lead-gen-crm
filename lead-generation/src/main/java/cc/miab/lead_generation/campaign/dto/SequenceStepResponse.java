@@ -29,7 +29,13 @@ public record SequenceStepResponse(
         String body,
 
         @JsonProperty("isActive")
-        boolean isActive
+        boolean isActive,
+
+        @JsonProperty("cc")
+        String cc,
+
+        @JsonProperty("bcc")
+        String bcc
 ) {
     public static SequenceStepResponse from(SequenceStep step) {
         String channel = step.getChannel() != null ? step.getChannel() : "email";
@@ -45,7 +51,9 @@ public record SequenceStepResponse(
                 title,
                 step.getSubjectTemplate() != null ? step.getSubjectTemplate() : "",
                 step.getBodyTemplate() != null ? step.getBodyTemplate() : "",
-                step.getIsActive() != null ? step.getIsActive() : true
+                step.getIsActive() != null ? step.getIsActive() : true,
+                step.getCcRecipients(),
+                step.getBccRecipients()
         );
     }
 }

@@ -36,7 +36,15 @@ public record SequenceStepRequest(
 
         @JsonAlias({"is_active", "isActive"})
         @JsonProperty("isActive")
-        Boolean isActive
+        Boolean isActive,
+
+        @JsonAlias({"cc", "cc_recipients", "ccRecipients"})
+        @JsonProperty("cc")
+        String cc,
+
+        @JsonAlias({"bcc", "bcc_recipients", "bccRecipients"})
+        @JsonProperty("bcc")
+        String bcc
 ) {
     public int resolvedStepOrder(int defaultOrder) {
         return stepNumber != null ? stepNumber : defaultOrder;
@@ -65,5 +73,13 @@ public record SequenceStepRequest(
 
     public boolean resolvedIsActive() {
         return isActive != null ? isActive : true;
+    }
+
+    public String resolvedCc() {
+        return cc != null && !cc.isBlank() ? cc.trim() : null;
+    }
+
+    public String resolvedBcc() {
+        return bcc != null && !bcc.isBlank() ? bcc.trim() : null;
     }
 }

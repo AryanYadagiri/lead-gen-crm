@@ -56,6 +56,8 @@ export interface SequenceStep {
   subject?: string;
   body: string;
   isActive?: boolean;
+  cc?: string;
+  bcc?: string;
 }
 
 export interface VariableTag {

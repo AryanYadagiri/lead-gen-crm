@@ -723,16 +723,32 @@ public class EmailCampaignService {
                     }
                     Campaign activeCampaign = freshCampaignOpt.get();
 
-                    emailSenderService.sendEmail(
-                            tracker.getEmail(),
-                            parsedSubject,
-                            parsedBody,
-                            activeCampaign.getSenderEmail(),
-                            activeCampaign.getSenderPassword(),
-                            activeCampaign.getSenderName(),
-                            activeCampaign.getSmtpHost(),
-                            activeCampaign.getSmtpPort()
-                    );
+                    if ((currentStep.getCcRecipients() != null && !currentStep.getCcRecipients().isBlank())
+                            || (currentStep.getBccRecipients() != null && !currentStep.getBccRecipients().isBlank())) {
+                        emailSenderService.sendEmail(
+                                tracker.getEmail(),
+                                parsedSubject,
+                                parsedBody,
+                                activeCampaign.getSenderEmail(),
+                                activeCampaign.getSenderPassword(),
+                                activeCampaign.getSenderName(),
+                                activeCampaign.getSmtpHost(),
+                                activeCampaign.getSmtpPort(),
+                                currentStep.getCcRecipients(),
+                                currentStep.getBccRecipients()
+                        );
+                    } else {
+                        emailSenderService.sendEmail(
+                                tracker.getEmail(),
+                                parsedSubject,
+                                parsedBody,
+                                activeCampaign.getSenderEmail(),
+                                activeCampaign.getSenderPassword(),
+                                activeCampaign.getSenderName(),
+                                activeCampaign.getSmtpHost(),
+                                activeCampaign.getSmtpPort()
+                        );
+                    }
                     recordEmailDispatched(tracker.getCampaignId());
                     logger.info("Dispatched step {} email for campaign {} to {}",
                             tracker.getCurrentStepOrder(), tracker.getCampaignId(), tracker.getEmail());
@@ -862,7 +878,7 @@ public class EmailCampaignService {
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                             "Step delay cannot exceed 90 days (received: " + delay + " days)");
                 }
-                steps.add(new SequenceStep(
+                SequenceStep s = new SequenceStep(
                         campaignId,
                         sr.resolvedStepOrder(idx),
                         sr.resolvedChannel(),
@@ -871,7 +887,10 @@ public class EmailCampaignService {
                         sr.resolvedSubject(),
                         sr.resolvedBody(),
                         sr.resolvedIsActive()
-                ));
+                );
+                s.setCcRecipients(sr.resolvedCc());
+                s.setBccRecipients(sr.resolvedBcc());
+                steps.add(s);
                 idx++;
             }
         } else {
@@ -918,16 +937,32 @@ public class EmailCampaignService {
                             stepNum + 1, stepNum, email, verification != null ? verification.diagnosis() : "Validation failed"));
                 } else if (sendActualEmail && email != null && email.contains("@")) {
                     try {
-                        emailSenderService.sendEmail(
-                                email,
-                                parsedSubject,
-                                parsedBody,
-                                campaign.getSenderEmail(),
-                                campaign.getSenderPassword(),
-                                campaign.getSenderName(),
-                                campaign.getSmtpHost(),
-                                campaign.getSmtpPort()
-                        );
+                        if ((step.getCcRecipients() != null && !step.getCcRecipients().isBlank())
+                                || (step.getBccRecipients() != null && !step.getBccRecipients().isBlank())) {
+                            emailSenderService.sendEmail(
+                                    email,
+                                    parsedSubject,
+                                    parsedBody,
+                                    campaign.getSenderEmail(),
+                                    campaign.getSenderPassword(),
+                                    campaign.getSenderName(),
+                                    campaign.getSmtpHost(),
+                                    campaign.getSmtpPort(),
+                                    step.getCcRecipients(),
+                                    step.getBccRecipients()
+                            );
+                        } else {
+                            emailSenderService.sendEmail(
+                                    email,
+                                    parsedSubject,
+                                    parsedBody,
+                                    campaign.getSenderEmail(),
+                                    campaign.getSenderPassword(),
+                                    campaign.getSenderName(),
+                                    campaign.getSmtpHost(),
+                                    campaign.getSmtpPort()
+                            );
+                        }
                         logs.add(String.format("[09:%02d AM] Step %d Delivered to %s! Subject: \"%s\"",
                                 stepNum + 2, stepNum, email, parsedSubject));
                     } catch (Exception ex) {
@@ -988,6 +1023,8 @@ public class EmailCampaignService {
                     req.resolvedBody(),
                     req.resolvedIsActive()
             );
+            step.setCcRecipients(req.resolvedCc());
+            step.setBccRecipients(req.resolvedBcc());
             newSteps.add(step);
             order++;
         }
@@ -1019,6 +1056,8 @@ public class EmailCampaignService {
         if (req.subject() != null) step.setSubjectTemplate(req.subject());
         if (req.body() != null) step.setBodyTemplate(req.body());
         if (req.isActive() != null) step.setIsActive(req.isActive());
+        if (req.cc() != null) step.setCcRecipients(req.resolvedCc());
+        if (req.bcc() != null) step.setBccRecipients(req.resolvedBcc());
 
         return sequenceStepRepository.save(step);
     }

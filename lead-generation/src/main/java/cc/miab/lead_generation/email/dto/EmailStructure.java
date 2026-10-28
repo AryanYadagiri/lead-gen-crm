@@ -13,9 +13,15 @@ public record EmailStructure(
         @JsonAlias({"sender_password", "senderPassword", "password"}) @JsonProperty("sender_password") String senderPassword,
         @JsonAlias({"sender_name", "senderName", "from_name", "fromName"}) @JsonProperty("sender_name") String senderName,
         @JsonAlias({"smtp_host", "smtpHost", "host"}) @JsonProperty("smtp_host") String smtpHost,
-        @JsonAlias({"smtp_port", "smtpPort", "port"}) @JsonProperty("smtp_port") Integer smtpPort
+        @JsonAlias({"smtp_port", "smtpPort", "port"}) @JsonProperty("smtp_port") Integer smtpPort,
+        @JsonAlias({"cc", "cc_recipients"}) @JsonProperty("cc") String cc,
+        @JsonAlias({"bcc", "bcc_recipients"}) @JsonProperty("bcc") String bcc
 ) {
+    public EmailStructure(String to, String subject, String body, String senderEmail, String senderPassword, String senderName, String smtpHost, Integer smtpPort) {
+        this(to, subject, body, senderEmail, senderPassword, senderName, smtpHost, smtpPort, null, null);
+    }
+
     public EmailStructure(String to, String subject, String body) {
-        this(to, subject, body, null, null, null, null, null);
+        this(to, subject, body, null, null, null, null, null, null, null);
     }
 }

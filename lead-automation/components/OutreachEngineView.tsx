@@ -218,6 +218,8 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     title: 'Initial Step',
     body: '',
     subject: '',
+    cc: '',
+    bcc: '',
     isActive: true,
   };
 
@@ -326,6 +328,8 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
       delayDays: 2,
       title: channel === 'email' ? 'Email Step' : 'WhatsApp Step',
       subject: channel === 'email' ? 'Following up on my previous message' : undefined,
+      cc: '',
+      bcc: '',
       body: channel === 'email' 
         ? `Hi {{first_name}},\n\nWanted to check if you had a moment to review my earlier note regarding {{company_name}}?\n\nBest regards,`
         : `Hi {{first_name}} 👋 Quick follow-up regarding {{company_name}}. Let me know if you are open to connect!`,
@@ -1801,6 +1805,37 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                   />
                 </div>
 
+                {/* Optional CC & BCC Fields */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-medium text-[#b9b9b9]">
+                      <span>CC:</span>
+                      <span className="text-[10px] font-mono text-[#797979]">Optional</span>
+                    </div>
+                    <input
+                      type="text"
+                      value={activeStep.cc || ''}
+                      onChange={(e) => updateActiveStep({ cc: e.target.value })}
+                      placeholder="Optional (separate multiple emails with commas)"
+                      className="w-full bg-[#0b0b0b] text-white placeholder-[#797979] text-xs px-3.5 py-2.5 rounded-[3px] border border-[#353535] focus:outline-none focus:border-[#0052ef] font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-medium text-[#b9b9b9]">
+                      <span>BCC:</span>
+                      <span className="text-[10px] font-mono text-[#797979]">Optional</span>
+                    </div>
+                    <input
+                      type="text"
+                      value={activeStep.bcc || ''}
+                      onChange={(e) => updateActiveStep({ bcc: e.target.value })}
+                      placeholder="Optional (separate multiple emails with commas)"
+                      className="w-full bg-[#0b0b0b] text-white placeholder-[#797979] text-xs px-3.5 py-2.5 rounded-[3px] border border-[#353535] focus:outline-none focus:border-[#0052ef] font-mono"
+                    />
+                  </div>
+                </div>
+
                 {/* Rich Message Body */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs font-medium text-[#b9b9b9]">
@@ -1825,6 +1860,16 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
                     <p className="font-semibold text-[#55beff]">
                       To: {currentSampleLead ? currentSampleLead.email : 'No enrolled lead'}
                     </p>
+                    {activeStep.cc && (
+                      <p className="text-[11px] font-mono text-[#a3a3a3]">
+                        CC: {activeStep.cc}
+                      </p>
+                    )}
+                    {activeStep.bcc && (
+                      <p className="text-[11px] font-mono text-[#797979]">
+                        BCC: {activeStep.bcc}
+                      </p>
+                    )}
                     <p className="font-medium text-white border-b border-[#353535] pb-2">
                       Subject: {resolveTemplateTags(activeStep.subject || '', currentSampleLead)}
                     </p>

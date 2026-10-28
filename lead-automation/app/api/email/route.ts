@@ -4,7 +4,7 @@ import nodemailer from 'nodemailer';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { to, subject, body: emailBody, smtp } = body;
+    const { to, subject, body: emailBody, smtp, cc, bcc } = body;
 
     if (!to || !subject || !emailBody) {
       return NextResponse.json(
@@ -41,12 +41,21 @@ export async function POST(request: Request) {
       greetingTimeout: 15000,
     });
 
-    const info = await transporter.sendMail({
+    const mailOptions: Record<string, any> = {
       from: fromName ? `"${fromName}" <${user}>` : user,
       to,
       subject,
       text: emailBody,
-    });
+    };
+
+    if (cc && typeof cc === 'string' && cc.trim()) {
+      mailOptions.cc = cc.trim();
+    }
+    if (bcc && typeof bcc === 'string' && bcc.trim()) {
+      mailOptions.bcc = bcc.trim();
+    }
+
+    const info = await transporter.sendMail(mailOptions);
 
     console.log('[Email Dispatch] Successfully sent email to', to, 'Message ID:', info.messageId);
 

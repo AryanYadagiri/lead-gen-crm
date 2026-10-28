@@ -364,4 +364,51 @@ class EmailCampaignServiceTest {
         );
         assertEquals("COMPLETED", tracker.getStatus(), "Tracker should complete after both steps are delivered");
     }
+
+    @Test
+    void testProcessTracker_WithCcAndBcc_PassesToEmailSenderService() {
+        Long campaignId = 20L;
+        Campaign campaign = new Campaign("Campaign CC", "RUNNING");
+        campaign.setId(campaignId);
+        campaign.setSenderEmail("sender@example.com");
+        campaign.setSenderPassword("pass");
+        campaign.setSmtpHost("smtp.example.com");
+        campaign.setSmtpPort(587);
+
+        when(campaignRepository.findById(campaignId)).thenReturn(Optional.of(campaign));
+
+        cc.miab.lead_generation.campaign.entity.SequenceStep step =
+                new cc.miab.lead_generation.campaign.entity.SequenceStep(campaignId, 1, "email", "Step 1", 0, "Subject", "Body", true);
+        step.setCcRecipients("cc1@example.com, cc2@example.com");
+        step.setBccRecipients("bcc@example.com");
+
+        when(sequenceStepRepository.findByCampaignIdAndStepOrder(campaignId, 1)).thenReturn(Optional.of(step));
+        when(sequenceStepRepository.findByCampaignIdAndStepOrder(campaignId, 2)).thenReturn(Optional.empty());
+        when(emailVerifierService.verifyEmail(anyString())).thenReturn(null);
+
+        cc.miab.lead_generation.campaign.entity.LeadSequenceTracker tracker =
+                new cc.miab.lead_generation.campaign.entity.LeadSequenceTracker();
+        tracker.setId(601L);
+        tracker.setLeadId("lead-601");
+        tracker.setEmail("lead@example.com");
+        tracker.setCampaignId(campaignId);
+        tracker.setStatus("PENDING");
+        tracker.setCurrentStepOrder(1);
+
+        service.processTracker(tracker);
+
+        verify(emailSenderService).sendEmail(
+                eq("lead@example.com"),
+                eq("Subject"),
+                eq("Body"),
+                eq("sender@example.com"),
+                eq("pass"),
+                any(),
+                eq("smtp.example.com"),
+                eq(587),
+                eq("cc1@example.com, cc2@example.com"),
+                eq("bcc@example.com")
+        );
+        assertEquals("COMPLETED", tracker.getStatus());
+    }
 }

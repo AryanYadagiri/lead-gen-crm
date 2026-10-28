@@ -39,6 +39,12 @@ public class SequenceStep {
     @Column(name = "is_active")
     private Boolean isActive = true;
 
+    @Column(name = "cc_recipients", columnDefinition = "TEXT")
+    private String ccRecipients;
+
+    @Column(name = "bcc_recipients", columnDefinition = "TEXT")
+    private String bccRecipients;
+
     public SequenceStep() {
     }
 
@@ -135,5 +141,21 @@ public class SequenceStep {
 
     public void setIsActive(Boolean active) {
         isActive = active != null ? active : true;
+    }
+
+    public String getCcRecipients() {
+        return ccRecipients;
+    }
+
+    public void setCcRecipients(String ccRecipients) {
+        this.ccRecipients = ccRecipients;
+    }
+
+    public String getBccRecipients() {
+        return bccRecipients;
+    }
+
+    public void setBccRecipients(String bccRecipients) {
+        this.bccRecipients = bccRecipients;
     }
 }

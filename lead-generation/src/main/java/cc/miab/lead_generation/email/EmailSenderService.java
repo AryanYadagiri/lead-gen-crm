@@ -15,6 +15,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 
+import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.MimeMessage;
+import org.springframework.mail.javamail.MimeMessageHelper;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -48,12 +52,14 @@ public class EmailSenderService {
                 email.senderPassword(),
                 email.senderName(),
                 email.smtpHost(),
-                email.smtpPort()
+                email.smtpPort(),
+                email.cc(),
+                email.bcc()
         );
     }
 
     public String sendEmail(String to, String subject, String body) {
-        return sendEmail(to, subject, body, null, null, null, null, null);
+        return sendEmail(to, subject, body, null, null, null, null, null, null, null);
     }
 
     public String sendEmail(String to,
@@ -64,6 +70,19 @@ public class EmailSenderService {
                             String senderName,
                             String smtpHost,
                             Integer smtpPort) {
+        return sendEmail(to, subject, body, senderEmail, senderPassword, senderName, smtpHost, smtpPort, null, null);
+    }
+
+    public String sendEmail(String to,
+                            String subject,
+                            String body,
+                            String senderEmail,
+                            String senderPassword,
+                            String senderName,
+                            String smtpHost,
+                            Integer smtpPort,
+                            String cc,
+                            String bcc) {
         final String effectiveUser = (senderEmail != null && !senderEmail.isBlank()) ? senderEmail.trim() : defaultFromEmail;
         final String effectiveHost = (smtpHost != null && !smtpHost.isBlank()) ? smtpHost.trim() : "smtp.hostinger.com";
         final int effectivePort = (smtpPort != null && smtpPort > 0) ? smtpPort : 465;
@@ -82,6 +101,13 @@ public class EmailSenderService {
                 payload.put("to", to);
                 payload.put("subject", subject);
                 payload.put("body", body);
+
+                if (cc != null && !cc.isBlank()) {
+                    payload.put("cc", cc.trim());
+                }
+                if (bcc != null && !bcc.isBlank()) {
+                    payload.put("bcc", bcc.trim());
+                }
 
                 Map<String, Object> smtpMap = new HashMap<>();
                 smtpMap.put("user", effectiveUser);
@@ -114,25 +140,52 @@ public class EmailSenderService {
             }
         }
 
-        // 2. Secondary fallback: Dynamic direct SMTP
+        // 2. Secondary fallback: Dynamic direct SMTP with MimeMessageHelper
         try {
             JavaMailSender dynamicSender = createDynamicSender(effectiveHost, effectivePort, effectiveUser, senderPassword);
-            final SimpleMailMessage message = new SimpleMailMessage();
+            MimeMessage mimeMessage = dynamicSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, false, "UTF-8");
+
             if (senderName != null && !senderName.isBlank()) {
-                message.setFrom(String.format("\"%s\" <%s>", senderName.trim(), effectiveUser));
+                helper.setFrom(new InternetAddress(effectiveUser, senderName.trim(), "UTF-8"));
             } else {
-                message.setFrom(effectiveUser);
+                helper.setFrom(effectiveUser);
             }
-            message.setTo(to);
-            message.setSubject(subject);
-            message.setText(body);
-            dynamicSender.send(message);
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(body, false);
+
+            if (cc != null && !cc.isBlank()) {
+                String[] ccList = parseEmailList(cc);
+                if (ccList.length > 0) {
+                    helper.setCc(ccList);
+                }
+            }
+
+            if (bcc != null && !bcc.isBlank()) {
+                String[] bccList = parseEmailList(bcc);
+                if (bccList.length > 0) {
+                    helper.setBcc(bccList);
+                }
+            }
+
+            dynamicSender.send(mimeMessage);
             logger.info("Successfully sent email to recipient: {} via direct SMTP", to);
             return "Email campaign successful";
         } catch (Exception ex) {
             logger.error("Direct SMTP send failed for {}: {}", to, ex.getMessage());
             throw new RuntimeException("Failed to dispatch email: " + ex.getMessage(), ex);
         }
+    }
+
+    private String[] parseEmailList(String emails) {
+        if (emails == null || emails.isBlank()) {
+            return new String[0];
+        }
+        return Arrays.stream(emails.split("[,;]"))
+                .map(String::trim)
+                .filter(e -> !e.isBlank() && e.contains("@"))
+                .toArray(String[]::new);
     }
 
     /**
