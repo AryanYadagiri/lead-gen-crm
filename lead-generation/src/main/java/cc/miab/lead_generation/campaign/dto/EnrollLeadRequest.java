@@ -50,17 +50,22 @@ public record EnrollLeadRequest(
         @JsonProperty("initialDelayDays")
         Integer initialDelayDays
 ) {
-    public String resolvedFirstName() {
-        if (firstName != null && !firstName.isBlank()) return firstName;
+    public String rawFirstName() {
+        if (firstName != null && !firstName.isBlank()) return firstName.trim();
         if (fullName != null && !fullName.isBlank()) {
             return fullName.trim().split("\\s+")[0];
         }
-        return "There";
+        return null;
+    }
+
+    public String resolvedFirstName() {
+        String raw = rawFirstName();
+        return raw != null ? raw : "";
     }
 
     public String resolvedFullName() {
-        if (fullName != null && !fullName.isBlank()) return fullName;
-        if (firstName != null && !firstName.isBlank()) return firstName;
+        if (fullName != null && !fullName.isBlank()) return fullName.trim();
+        if (firstName != null && !firstName.isBlank()) return firstName.trim();
         return "";
     }
 }

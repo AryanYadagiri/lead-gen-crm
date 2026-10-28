@@ -42,6 +42,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -374,23 +376,104 @@ public class EmailCampaignService {
     }
 
     /**
+     * Resolves effective first name, verifying non-blank and non-placeholder value.
+     */
+    public String resolveEffectiveFirstName(String firstName, String fullName) {
+        if (firstName != null && !firstName.isBlank() && !firstName.trim().equalsIgnoreCase("There")) {
+            return firstName.trim();
+        }
+        if (fullName != null && !fullName.isBlank() && !fullName.trim().equalsIgnoreCase("Target Lead")) {
+            String firstWord = fullName.trim().split("\\s+")[0];
+            if (!firstWord.isBlank() && !firstWord.equalsIgnoreCase("There")) {
+                return firstWord;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolves effective company name, verifying non-blank.
+     */
+    public String resolveEffectiveCompanyName(String companyName) {
+        if (companyName != null && !companyName.isBlank()) {
+            return companyName.trim();
+        }
+        return null;
+    }
+
+    /**
+     * Applies template tags with Smart Greeting Cascade:
+     * 1. If first_name exists -> Render: Hi {{first_name}}, (e.g., "Hi Gautam,")
+     * 2. If first_name is missing but company_name exists -> Render: Hi {{company_name}} Team, (e.g., "Hi Wellsun International Team,")
+     * 3. If both are missing -> Render: Hello Team,
+     */
+    public String applyTemplateTags(
+            String template,
+            String rawFirstName,
+            String fullName,
+            String personTitle,
+            String rawCompanyName,
+            String location,
+            String revenue,
+            String industry
+    ) {
+        if (template == null) return "";
+
+        String effectiveFirstName = resolveEffectiveFirstName(rawFirstName, fullName);
+        String effectiveCompanyName = resolveEffectiveCompanyName(rawCompanyName);
+
+        String result = template;
+
+        if (effectiveFirstName != null) {
+            // 1. If first_name exists -> Render: Hi {{first_name}}, (e.g., "Hi Gautam,")
+            result = result.replaceAll("(?i)\\{\\{\\s*first_name\\s*\\}\\}", Matcher.quoteReplacement(effectiveFirstName));
+        } else if (effectiveCompanyName != null) {
+            // 2. If first_name is missing but company_name exists -> Render: Hi {{company_name}} Team, (e.g., "Hi Wellsun International Team,")
+            String companyTeamGreetingWithComma = "Hi " + effectiveCompanyName + " Team,";
+            String companyTeamGreeting = "Hi " + effectiveCompanyName + " Team";
+            String companyTeam = effectiveCompanyName + " Team";
+
+            result = result.replaceAll("(?i)\\b(Hi|Hey|Hello)\\s+\\{\\{\\s*first_name\\s*\\}\\}(?:\\s+Team)?\\s*,", Matcher.quoteReplacement(companyTeamGreetingWithComma));
+            result = result.replaceAll("(?i)\\b(Hi|Hey|Hello)\\s+\\{\\{\\s*first_name\\s*\\}\\}(?:\\s+Team)?", Matcher.quoteReplacement(companyTeamGreeting));
+            result = result.replaceAll("(?i)\\{\\{\\s*first_name\\s*\\}\\}\\s*,", Matcher.quoteReplacement(companyTeam + ","));
+            result = result.replaceAll("(?i)\\{\\{\\s*first_name\\s*\\}\\}", Matcher.quoteReplacement(companyTeam));
+        } else {
+            // 3. If both are missing -> Render: Hello Team,
+            result = result.replaceAll("(?i)\\b(Hi|Hey|Hello)\\s+\\{\\{\\s*first_name\\s*\\}\\}(?:\\s+Team)?\\s*,", "Hello Team,");
+            result = result.replaceAll("(?i)\\b(Hi|Hey|Hello)\\s+\\{\\{\\s*first_name\\s*\\}\\}(?:\\s+Team)?", "Hello Team");
+            result = result.replaceAll("(?i)\\{\\{\\s*first_name\\s*\\}\\}\\s*,", "Team,");
+            result = result.replaceAll("(?i)\\{\\{\\s*first_name\\s*\\}\\}", "Team");
+        }
+
+        return result
+                .replace("{{full_name}}", fullName != null ? fullName : "")
+                .replace("{{person_title}}", personTitle != null ? personTitle : "")
+                .replace("{{company_name}}", effectiveCompanyName != null ? effectiveCompanyName : "")
+                .replace("{{location}}", location != null ? location : "")
+                .replace("{{revenue}}", revenue != null ? revenue : "0")
+                .replace("{{industry}}", industry != null ? industry : "");
+    }
+
+    /**
      * Replaces template tokens matching Next.js frontend string parser.
      */
     public String parseTemplate(String template, LeadSequenceTracker tracker) {
         if (template == null) return "";
-        return template
-                .replace("{{first_name}}", tracker.getFirstName() != null ? tracker.getFirstName() : "There")
-                .replace("{{full_name}}", tracker.getFullName() != null ? tracker.getFullName() : "")
-                .replace("{{person_title}}", tracker.getPersonTitle() != null ? tracker.getPersonTitle() : "")
-                .replace("{{company_name}}", tracker.getCompanyName() != null ? tracker.getCompanyName() : "")
-                .replace("{{location}}", tracker.getLocation() != null ? tracker.getLocation() : "")
-                .replace("{{revenue}}", tracker.getRevenue() != null ? tracker.getRevenue() : "0")
-                .replace("{{industry}}", tracker.getIndustry() != null ? tracker.getIndustry() : "");
+        return applyTemplateTags(
+                template,
+                tracker.getFirstName(),
+                tracker.getFullName(),
+                tracker.getPersonTitle(),
+                tracker.getCompanyName(),
+                tracker.getLocation(),
+                tracker.getRevenue(),
+                tracker.getIndustry()
+        );
     }
 
     public String parseTemplate(String template, EnrollLeadRequest lead) {
         if (template == null) return "";
-        String firstName = lead != null ? lead.resolvedFirstName() : "There";
+        String firstName = lead != null ? lead.rawFirstName() : null;
         String fullName = lead != null ? lead.resolvedFullName() : "";
         String title = (lead != null && lead.personTitle() != null) ? lead.personTitle() : "";
         String company = (lead != null && lead.companyName() != null) ? lead.companyName() : "";
@@ -398,14 +481,7 @@ public class EmailCampaignService {
         String revenue = (lead != null && lead.revenue() != null) ? lead.revenue() : "0";
         String industry = (lead != null && lead.industry() != null) ? lead.industry() : "";
 
-        return template
-                .replace("{{first_name}}", firstName)
-                .replace("{{full_name}}", fullName)
-                .replace("{{person_title}}", title)
-                .replace("{{company_name}}", company)
-                .replace("{{location}}", location)
-                .replace("{{revenue}}", revenue)
-                .replace("{{industry}}", industry);
+        return applyTemplateTags(template, firstName, fullName, title, company, location, revenue, industry);
     }
 
     /**
@@ -1125,7 +1201,7 @@ public class EmailCampaignService {
                 request.email(),
                 request.phone(),
                 campaignId,
-                request.resolvedFirstName(),
+                request.rawFirstName(),
                 request.resolvedFullName(),
                 request.personTitle(),
                 request.companyName(),

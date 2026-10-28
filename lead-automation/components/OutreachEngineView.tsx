@@ -226,12 +226,47 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
   // Currently selected lead for live tag preview rendering (from real enrolled leads)
   const currentSampleLead: Lead | null = enrolledLeads[activeLeadPreviewIndex] || enrolledLeads[0] || null;
 
-  // Helper function to resolve dynamic template tags like {{first_name}}
+  // Helper function to resolve dynamic template tags like {{first_name}} with Smart Greeting Cascade
   const resolveTemplateTags = (text: string, lead: Lead | null): string => {
     if (!text) return '';
     if (!lead) return text;
-    return text
-      .replace(/\{\{first_name\}\}/g, lead.name ? lead.name.split(' ')[0] : 'There')
+
+    const rawName = (lead.name || '').trim();
+    const rawCompany = (lead.company || '').trim();
+
+    // Check if first_name exists (not empty, not "There", not placeholder)
+    let firstName: string | null = null;
+    if (rawName && !rawName.toLowerCase().startsWith('there') && !rawName.toLowerCase().startsWith('target lead')) {
+      const firstWord = rawName.split(/\s+/)[0];
+      if (firstWord && !firstWord.toLowerCase().startsWith('there')) {
+        firstName = firstWord;
+      }
+    }
+
+    const companyName = rawCompany || null;
+
+    let result = text;
+
+    if (firstName) {
+      // 1. If first_name exists -> Render: Hi {{first_name}}, (e.g., "Hi Gautam,")
+      result = result.replace(/\{\{\s*first_name\s*\}\}/gi, firstName);
+    } else if (companyName) {
+      // 2. If first_name is missing but company_name exists -> Render: Hi {{company_name}} Team, (e.g., "Hi Wellsun International Team,")
+      result = result
+        .replace(/\b(Hi|Hey|Hello)\s+\{\{\s*first_name\s*\}\}(?:\s+Team)?\s*,/gi, `Hi ${companyName} Team,`)
+        .replace(/\b(Hi|Hey|Hello)\s+\{\{\s*first_name\s*\}\}(?:\s+Team)?/gi, `Hi ${companyName} Team`)
+        .replace(/\{\{\s*first_name\s*\}\}\s*,/gi, `${companyName} Team,`)
+        .replace(/\{\{\s*first_name\s*\}\}/gi, `${companyName} Team`);
+    } else {
+      // 3. If both are missing -> Render: Hello Team,
+      result = result
+        .replace(/\b(Hi|Hey|Hello)\s+\{\{\s*first_name\s*\}\}(?:\s+Team)?\s*,/gi, 'Hello Team,')
+        .replace(/\b(Hi|Hey|Hello)\s+\{\{\s*first_name\s*\}\}(?:\s+Team)?/gi, 'Hello Team')
+        .replace(/\{\{\s*first_name\s*\}\}\s*,/gi, 'Team,')
+        .replace(/\{\{\s*first_name\s*\}\}/gi, 'Team');
+    }
+
+    return result
       .replace(/\{\{full_name\}\}/g, lead.name || '')
       .replace(/\{\{person_title\}\}/g, lead.title || '')
       .replace(/\{\{company_name\}\}/g, lead.company || '')

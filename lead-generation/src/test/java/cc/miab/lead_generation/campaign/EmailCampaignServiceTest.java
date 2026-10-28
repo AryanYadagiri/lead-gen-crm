@@ -411,4 +411,74 @@ class EmailCampaignServiceTest {
         );
         assertEquals("COMPLETED", tracker.getStatus());
     }
+
+    @Test
+    void testTemplateParser_SmartGreetingCascade_FirstNameExists() {
+        String template = "Hi {{first_name}},\n\nI noticed {{company_name}} is growing.";
+        
+        // 1. First name exists -> Render: Hi {{first_name}}, (e.g., "Hi Gautam,")
+        cc.miab.lead_generation.campaign.entity.LeadSequenceTracker tracker =
+                new cc.miab.lead_generation.campaign.entity.LeadSequenceTracker();
+        tracker.setFirstName("Gautam");
+        tracker.setCompanyName("Wellsun International");
+
+        String parsed = service.parseTemplate(template, tracker);
+        assertEquals("Hi Gautam,\n\nI noticed Wellsun International is growing.", parsed);
+    }
+
+    @Test
+    void testTemplateParser_SmartGreetingCascade_MissingFirstName_HasCompany() {
+        String template = "Hi {{first_name}},\n\nI noticed {{company_name}} is growing.";
+
+        // 2. If first_name is missing but company_name exists -> Render: Hi {{company_name}} Team, (e.g., "Hi Wellsun International Team,")
+        cc.miab.lead_generation.campaign.entity.LeadSequenceTracker tracker =
+                new cc.miab.lead_generation.campaign.entity.LeadSequenceTracker();
+        tracker.setFirstName(null);
+        tracker.setFullName(null);
+        tracker.setCompanyName("Wellsun International");
+
+        String parsed = service.parseTemplate(template, tracker);
+        assertEquals("Hi Wellsun International Team,\n\nI noticed Wellsun International is growing.", parsed);
+    }
+
+    @Test
+    void testTemplateParser_SmartGreetingCascade_BothMissing() {
+        String template = "Hi {{first_name}},\n\nHope this message finds you well.";
+
+        // 3. If both are missing -> Render: Hello Team,
+        cc.miab.lead_generation.campaign.entity.LeadSequenceTracker tracker =
+                new cc.miab.lead_generation.campaign.entity.LeadSequenceTracker();
+        tracker.setFirstName(null);
+        tracker.setFullName(null);
+        tracker.setCompanyName(null);
+
+        String parsed = service.parseTemplate(template, tracker);
+        assertEquals("Hello Team,\n\nHope this message finds you well.", parsed);
+    }
+
+    @Test
+    void testTemplateParser_EnrollLeadRequest_SmartGreetingCascade() {
+        String template = "Hi {{first_name}},\n\nLet's connect.";
+
+        // With first name
+        cc.miab.lead_generation.campaign.dto.EnrollLeadRequest leadWithName =
+                new cc.miab.lead_generation.campaign.dto.EnrollLeadRequest(
+                        "1", "g@example.com", "123", "Gautam", "Gautam Adani", "CEO", "Wellsun", "NYC", "10", "Tech", 0
+                );
+        assertEquals("Hi Gautam,\n\nLet's connect.", service.parseTemplate(template, leadWithName));
+
+        // Missing first name, but company exists
+        cc.miab.lead_generation.campaign.dto.EnrollLeadRequest leadWithCompany =
+                new cc.miab.lead_generation.campaign.dto.EnrollLeadRequest(
+                        "2", "c@example.com", "123", null, null, null, "Wellsun International", "NYC", "10", "Tech", 0
+                );
+        assertEquals("Hi Wellsun International Team,\n\nLet's connect.", service.parseTemplate(template, leadWithCompany));
+
+        // Missing both
+        cc.miab.lead_generation.campaign.dto.EnrollLeadRequest leadEmpty =
+                new cc.miab.lead_generation.campaign.dto.EnrollLeadRequest(
+                        "3", "empty@example.com", "123", null, null, null, null, "NYC", "10", "Tech", 0
+                );
+        assertEquals("Hello Team,\n\nLet's connect.", service.parseTemplate(template, leadEmpty));
+    }
 }
