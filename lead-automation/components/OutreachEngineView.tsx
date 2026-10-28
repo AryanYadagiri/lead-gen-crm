@@ -24,7 +24,7 @@ import {
   Send, CheckCheck, Smartphone, Info, Play, CheckCircle2, ShieldAlert,
   ChevronRight, Users, Settings2, Code, Eye, RefreshCw, Server, Check, 
   AlertCircle, FileSpreadsheet, Upload, Zap, Clock, Pause, AlertTriangle,
-  Calendar, Globe, Sliders, ShieldCheck, RotateCcw, X
+  Calendar, Globe, Sliders, ShieldCheck, RotateCcw, X, Download
 } from 'lucide-react';
 
 interface OutreachEngineViewProps {
@@ -802,6 +802,207 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // 8. Export Campaign Outreach Proof to CSV (Sent & Failed Records)
+  // ---------------------------------------------------------------------------
+  const [isExportingCsv, setIsExportingCsv] = useState<boolean>(false);
+
+  const handleExportProofCsv = async () => {
+    try {
+      setIsExportingCsv(true);
+
+      // Attempt to get the latest fresh trackers from backend if a campaign is active
+      let trackersToUse = serverTrackers;
+      if (campaign?.id) {
+        try {
+          const fresh = await getCampaignTrackers(campaign.id);
+          if (fresh && Array.isArray(fresh)) {
+            trackersToUse = fresh;
+            setServerTrackers(fresh);
+          }
+        } catch (fetchErr) {
+          console.warn('[OutreachEngineView] Could not fetch fresh trackers for export, falling back to local state:', fetchErr);
+        }
+      }
+
+      interface OutreachReportRow {
+        email: string;
+        step: string;
+        status: string;
+        timestamp: string;
+        note: string;
+      }
+
+      const rows: OutreachReportRow[] = [];
+      const seenEntries = new Set<string>();
+
+      // 1. Process server sequence trackers (direct from database)
+      if (trackersToUse && trackersToUse.length > 0) {
+        trackersToUse.forEach((t) => {
+          const rawStatus = (t.status || '').toUpperCase();
+          const isDelivered = rawStatus === 'COMPLETED' || rawStatus === 'FINISHED' || rawStatus === 'DELIVERED';
+          const isFailed = rawStatus === 'FAILED' || rawStatus === 'INVALID_EMAIL';
+
+          let deliveryStatus: string;
+          let note = '';
+
+          if (isDelivered) {
+            deliveryStatus = 'DELIVERED';
+            note = 'Delivered successfully';
+          } else if (isFailed) {
+            deliveryStatus = 'FAILED';
+            note = rawStatus === 'INVALID_EMAIL'
+              ? 'Invalid email address blocked by verification'
+              : 'Dispatch error / SMTP connection failed';
+          } else {
+            deliveryStatus = 'PENDING';
+            note = 'Queued for dispatch';
+          }
+
+          const stepLabel = `Step ${t.currentStepOrder || 1}`;
+          const timestamp = t.nextExecutionTime
+            ? new Date(t.nextExecutionTime).toLocaleString()
+            : new Date().toLocaleString();
+
+          const key = `${t.email?.toLowerCase().trim()}_${stepLabel}_${deliveryStatus}`;
+          if (!seenEntries.has(key) && t.email) {
+            seenEntries.add(key);
+            rows.push({
+              email: t.email.trim(),
+              step: stepLabel,
+              status: deliveryStatus,
+              timestamp,
+              note,
+            });
+          }
+        });
+      }
+
+      // 2. Parse simulation or real-time execution logs if present
+      if (simulationLog && simulationLog.length > 0) {
+        simulationLog.forEach((logLine) => {
+          const isDelivered =
+            logLine.includes('Delivered') ||
+            logLine.includes('Sent & Delivered') ||
+            logLine.includes('Dispatched step');
+          const isFailed =
+            logLine.includes('BLOCKED') ||
+            logLine.includes('Blocked') ||
+            logLine.includes('FAILED') ||
+            logLine.includes('Dispatch Warning') ||
+            logLine.includes('INVALID') ||
+            logLine.includes('Execution failed') ||
+            logLine.includes('Launch blocked');
+
+          if (isDelivered || isFailed) {
+            const stepMatch = logLine.match(/Step\s*(\d+)/i);
+            const stepLabel = stepMatch ? `Step ${stepMatch[1]}` : 'Step 1';
+
+            const emailMatch = logLine.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+            const email = emailMatch ? emailMatch[1] : (currentSampleLead?.email || 'N/A');
+
+            const timeMatch = logLine.match(/\[(.*?)\]/);
+            const timestamp = timeMatch
+              ? `${new Date().toLocaleDateString()} ${timeMatch[1]}`
+              : new Date().toLocaleString();
+
+            const deliveryStatus = isDelivered ? 'DELIVERED' : 'FAILED';
+            let note = '';
+
+            if (isFailed) {
+              if (logLine.includes('INVALID') || logLine.includes('BLOCKED') || logLine.includes('Blocked')) {
+                const diagMatch = logLine.match(/\((.*?)\)/);
+                note = diagMatch ? `Invalid email (${diagMatch[1]})` : 'Invalid email address blocked';
+              } else if (logLine.includes('Dispatch Warning:')) {
+                note = logLine.split('Dispatch Warning:')[1]?.trim() || 'Dispatch warning';
+              } else if (logLine.includes('Launch blocked:')) {
+                note = logLine.split('Launch blocked:')[1]?.trim() || 'Launch blocked';
+              } else {
+                note = 'Dispatch attempt failed';
+              }
+            } else {
+              const subjMatch = logLine.match(/Subject:\s*"(.*?)"/);
+              note = subjMatch ? `Delivered - Subject: ${subjMatch[1]}` : 'Delivered successfully in sequence';
+            }
+
+            const key = `${email.toLowerCase().trim()}_${stepLabel}_${deliveryStatus}`;
+            if (!seenEntries.has(key)) {
+              seenEntries.add(key);
+              rows.push({
+                email,
+                step: stepLabel,
+                status: deliveryStatus,
+                timestamp,
+                note,
+              });
+            }
+          }
+        });
+      }
+
+      // 3. Fallback to queue targets if no trackers or simulation logs exist yet
+      if (rows.length === 0 && queueTargets && queueTargets.length > 0) {
+        queueTargets.forEach((qt) => {
+          const rawStatus = (qt.status || '').toUpperCase();
+          const deliveryStatus = rawStatus === 'COMPLETED' ? 'DELIVERED' : (rawStatus === 'FAILED' ? 'FAILED' : 'PENDING');
+          const note = deliveryStatus === 'DELIVERED'
+            ? 'Delivered successfully'
+            : deliveryStatus === 'FAILED'
+            ? 'Dispatch error'
+            : 'Enrolled in campaign queue';
+
+          rows.push({
+            email: qt.email || '',
+            step: `Step ${(qt as any).currentStep ?? (qt as any).current_step ?? 1}`,
+            status: deliveryStatus,
+            timestamp: new Date().toLocaleString(),
+            note,
+          });
+        });
+      }
+
+      // 4. Generate CSV
+      const csvHeaders = ['Lead Email', 'Sequence Step', 'Delivery Status', 'Timestamp', 'Failure Reason / Note'];
+      
+      const escapeCsvCell = (val: string | undefined | null): string => {
+        if (!val) return '""';
+        const str = String(val).replace(/"/g, '""');
+        return `"${str}"`;
+      };
+
+      const csvLines = [
+        csvHeaders.join(','),
+        ...rows.map((r) => [
+          escapeCsvCell(r.email),
+          escapeCsvCell(r.step),
+          escapeCsvCell(r.status),
+          escapeCsvCell(r.timestamp),
+          escapeCsvCell(r.note),
+        ].join(',')),
+      ];
+
+      const csvContent = '\uFEFF' + csvLines.join('\r\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', 'campaign-outreach-report.csv');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      setSyncFeedback(`Exported ${rows.length} outreach record(s) to campaign-outreach-report.csv`);
+      setTimeout(() => setSyncFeedback(null), 4000);
+    } catch (err: any) {
+      console.error('[OutreachEngineView] CSV export error:', err);
+      setSyncFeedback(`Export failed: ${err.message || 'Unknown error'}`);
+      setTimeout(() => setSyncFeedback(null), 4000);
+    } finally {
+      setIsExportingCsv(false);
+    }
+  };
+
   return (
     <div className="w-full max-w-[1640px] mx-auto px-4 md:px-8 py-6 space-y-6">
       
@@ -979,6 +1180,18 @@ export const OutreachEngineView: React.FC<OutreachEngineViewProps> = ({
               className="hidden"
             />
           </label>
+
+          {/* Export Proof (CSV) Action */}
+          <button
+            type="button"
+            onClick={handleExportProofCsv}
+            disabled={isExportingCsv}
+            className="h-10 inline-flex items-center gap-2 bg-[#212121] border border-[#353535] hover:border-[#55beff] text-white hover:text-[#55beff] px-4 rounded-lg text-xs font-mono cursor-pointer transition-all shrink-0 disabled:opacity-50"
+            title="Download campaign outreach proof of sent and failed emails as CSV"
+          >
+            <Download className={`w-3.5 h-3.5 text-[#55beff] ${isExportingCsv ? 'animate-bounce' : ''}`} />
+            <span>{isExportingCsv ? 'Exporting...' : 'Export Proof (CSV)'}</span>
+          </button>
 
           {/* Pause / Resume Campaign */}
           <button
