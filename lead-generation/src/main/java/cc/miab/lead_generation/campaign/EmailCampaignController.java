@@ -158,7 +158,9 @@ public class EmailCampaignController {
                 request.resolvedDelayDays(),
                 request.resolvedSubject(),
                 request.resolvedBody(),
-                request.resolvedIsActive()
+                request.resolvedIsActive(),
+                request.resolvedCc(),
+                request.resolvedBcc()
         );
         return SequenceStepResponse.from(saved);
     }

@@ -10,7 +10,6 @@ import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
@@ -21,13 +20,16 @@ import org.springframework.mail.javamail.MimeMessageHelper;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class EmailSenderService {
 
     private static final Logger logger = LoggerFactory.getLogger(EmailSenderService.class);
-    private static final ObjectMapper objectMapper = new ObjectMapper();
+    private static final Pattern ERROR_PATTERN = Pattern.compile("\"(?:error|message)\"\\s*:\\s*\"([^\"]+)\"");
 
     private final JavaMailSender defaultMailSender;
     private final String defaultFromEmail;
@@ -91,22 +93,36 @@ public class EmailSenderService {
             throw new IllegalStateException("No sender email configured. Please provide your email and password in campaign settings.");
         }
 
-        logger.info("Initiating email send for recipient: {} from: {}", to, effectiveUser);
+        // Empty check safeguard & proper array parsing for CC / BCC
+        final String[] validCc = (cc != null && !cc.trim().isEmpty()) ? parseEmailList(cc) : new String[0];
+        final String[] validBcc = (bcc != null && !bcc.trim().isEmpty()) ? parseEmailList(bcc) : new String[0];
+
+        logger.info("Initiating email send for recipient: {} (CC: {}, BCC: {}) from: {}",
+                to,
+                validCc.length > 0 ? Arrays.toString(validCc) : "none",
+                validBcc.length > 0 ? Arrays.toString(validBcc) : "none",
+                effectiveUser);
 
         // 1. Primary path: HTTPS Relay via Vercel Serverless (Port 443, never blocked by Render Free Tier)
         if (relayUrl != null && !relayUrl.isBlank()) {
             try {
-                logger.info("Relaying email dispatch to HTTPS endpoint: {} from: {}", relayUrl, effectiveUser);
+                logger.info("Relaying email dispatch to HTTPS endpoint: {} from: {} to: {} (CC: {}, BCC: {})",
+                        relayUrl, effectiveUser, to,
+                        validCc.length > 0 ? Arrays.toString(validCc) : "none",
+                        validBcc.length > 0 ? Arrays.toString(validBcc) : "none");
+
                 Map<String, Object> payload = new HashMap<>();
                 payload.put("to", to);
                 payload.put("subject", subject);
                 payload.put("body", body);
 
-                if (cc != null && !cc.isBlank()) {
-                    payload.put("cc", cc.trim());
+                if (validCc.length > 0) {
+                    payload.put("cc", String.join(", ", validCc));
+                    payload.put("ccList", validCc);
                 }
-                if (bcc != null && !bcc.isBlank()) {
-                    payload.put("bcc", bcc.trim());
+                if (validBcc.length > 0) {
+                    payload.put("bcc", String.join(", ", validBcc));
+                    payload.put("bccList", validBcc);
                 }
 
                 Map<String, Object> smtpMap = new HashMap<>();
@@ -125,18 +141,32 @@ public class EmailSenderService {
                         .uri(relayUrl)
                         .body(payload)
                         .retrieve()
-                        .toBodilessEntity();
+                        .toEntity(String.class);
 
                 if (response.getStatusCode().is2xxSuccessful()) {
-                    logger.info("Successfully delivered email to {} via HTTPS relay", to);
+                    logger.info("Successfully delivered email to {} via HTTPS relay (CC: {}, BCC: {}). Dispatch accepted by SMTP server. Response: {}",
+                            to,
+                            validCc.length > 0 ? Arrays.toString(validCc) : "none",
+                            validBcc.length > 0 ? Arrays.toString(validBcc) : "none",
+                            response.getBody());
                     return "Email campaign successful";
                 }
             } catch (RestClientResponseException rex) {
                 String errorMsg = extractErrorMessage(rex.getResponseBodyAsString(), rex.getMessage());
-                logger.error("HTTPS relay email send failed with status {}: {}", rex.getStatusCode(), errorMsg);
+                logger.error("HTTPS relay email send failed with status {} for recipient {} (CC: {}, BCC: {}): {}",
+                        rex.getStatusCode(),
+                        to,
+                        validCc.length > 0 ? Arrays.toString(validCc) : "none",
+                        validBcc.length > 0 ? Arrays.toString(validBcc) : "none",
+                        errorMsg);
                 throw new IllegalStateException("SMTP Relay Error: " + errorMsg, rex);
             } catch (Exception ex) {
-                logger.warn("HTTPS relay to {} encountered issue: {}. Falling back to direct SMTP...", relayUrl, ex.getMessage());
+                logger.warn("HTTPS relay to {} encountered issue for recipient {} (CC: {}, BCC: {}): {}. Falling back to direct SMTP...",
+                        relayUrl,
+                        to,
+                        validCc.length > 0 ? Arrays.toString(validCc) : "none",
+                        validBcc.length > 0 ? Arrays.toString(validBcc) : "none",
+                        ex.getMessage());
             }
         }
 
@@ -151,40 +181,48 @@ public class EmailSenderService {
             } else {
                 helper.setFrom(effectiveUser);
             }
-            helper.setTo(to);
-            helper.setSubject(subject);
-            helper.setText(body, false);
+            helper.setTo(to.trim());
+            helper.setSubject(subject != null ? subject : "");
+            helper.setText(body != null ? body : "", false);
 
-            if (cc != null && !cc.isBlank()) {
-                String[] ccList = parseEmailList(cc);
-                if (ccList.length > 0) {
-                    helper.setCc(ccList);
-                }
+            // Empty check safeguard: Only bind CC and BCC headers if non-null and not empty after trimming
+            if (validCc.length > 0) {
+                helper.setCc(validCc);
             }
 
-            if (bcc != null && !bcc.isBlank()) {
-                String[] bccList = parseEmailList(bcc);
-                if (bccList.length > 0) {
-                    helper.setBcc(bccList);
-                }
+            if (validBcc.length > 0) {
+                helper.setBcc(validBcc);
             }
 
             dynamicSender.send(mimeMessage);
-            logger.info("Successfully sent email to recipient: {} via direct SMTP", to);
+            logger.info("Successfully sent email to recipient: {} (CC: {}, BCC: {}) via direct SMTP. Dispatch accepted by SMTP server.",
+                    to,
+                    validCc.length > 0 ? Arrays.toString(validCc) : "none",
+                    validBcc.length > 0 ? Arrays.toString(validBcc) : "none");
             return "Email campaign successful";
         } catch (Exception ex) {
-            logger.error("Direct SMTP send failed for {}: {}", to, ex.getMessage());
+            logger.error("Direct SMTP send failed for recipient: {} (CC: {}, BCC: {}): {}",
+                    to,
+                    validCc.length > 0 ? Arrays.toString(validCc) : "none",
+                    validBcc.length > 0 ? Arrays.toString(validBcc) : "none",
+                    ex.getMessage(),
+                    ex);
             throw new RuntimeException("Failed to dispatch email: " + ex.getMessage(), ex);
         }
     }
 
-    private String[] parseEmailList(String emails) {
-        if (emails == null || emails.isBlank()) {
+    /**
+     * Trims and splits comma- or semicolon-separated email addresses into a clean, valid array.
+     * Safely handles surrounding angle brackets, trailing/leading spaces, and filters invalid entries.
+     */
+    public String[] parseEmailList(String emails) {
+        if (emails == null || emails.trim().isEmpty()) {
             return new String[0];
         }
         return Arrays.stream(emails.split("[,;]"))
                 .map(String::trim)
-                .filter(e -> !e.isBlank() && e.contains("@"))
+                .map(addr -> addr.replaceAll("^[<]+|[>]+$", "").trim())
+                .filter(e -> !e.isEmpty() && e.contains("@"))
                 .toArray(String[]::new);
     }
 
@@ -245,21 +283,15 @@ public class EmailSenderService {
 
     private String extractErrorMessage(String responseBody, String defaultMsg) {
         if (responseBody != null && !responseBody.isBlank()) {
-            try {
-                Map<?, ?> map = objectMapper.readValue(responseBody, Map.class);
-                if (map.containsKey("error") && map.get("error") != null) {
-                    return String.valueOf(map.get("error"));
-                }
-                if (map.containsKey("message") && map.get("message") != null) {
-                    return String.valueOf(map.get("message"));
-                }
-            } catch (Exception ignored) {
+            Matcher m = ERROR_PATTERN.matcher(responseBody);
+            if (m.find()) {
+                return m.group(1);
             }
         }
         return defaultMsg;
     }
 
-    private JavaMailSender createDynamicSender(String host, int port, String username, String password) {
+    public JavaMailSender createDynamicSender(String host, int port, String username, String password) {
         if (password == null || password.isBlank()) {
             return defaultMailSender;
         }

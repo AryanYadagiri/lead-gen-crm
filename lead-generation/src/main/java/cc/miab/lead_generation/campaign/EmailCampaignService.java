@@ -826,11 +826,20 @@ public class EmailCampaignService {
                         );
                     }
                     recordEmailDispatched(tracker.getCampaignId());
-                    logger.info("Dispatched step {} email for campaign {} to {}",
-                            tracker.getCurrentStepOrder(), tracker.getCampaignId(), tracker.getEmail());
+                    String ccInfo = (currentStep.getCcRecipients() != null && !currentStep.getCcRecipients().isBlank())
+                            ? " [CC: " + currentStep.getCcRecipients().trim() + "]" : "";
+                    String bccInfo = (currentStep.getBccRecipients() != null && !currentStep.getBccRecipients().isBlank())
+                            ? " [BCC: " + currentStep.getBccRecipients().trim() + "]" : "";
+                    logger.info("Dispatched step {} email for campaign {} to {}{}{}. Dispatch accepted by SMTP server.",
+                            tracker.getCurrentStepOrder(), tracker.getCampaignId(), tracker.getEmail(), ccInfo, bccInfo);
                 }
             } catch (Exception ex) {
-                logger.error("Failed to dispatch {} to {} for tracker ID: {}", channel, tracker.getEmail(), tracker.getId(), ex);
+                String ccInfo = (currentStep != null && currentStep.getCcRecipients() != null && !currentStep.getCcRecipients().isBlank())
+                        ? " [CC: " + currentStep.getCcRecipients().trim() + "]" : "";
+                String bccInfo = (currentStep != null && currentStep.getBccRecipients() != null && !currentStep.getBccRecipients().isBlank())
+                        ? " [BCC: " + currentStep.getBccRecipients().trim() + "]" : "";
+                logger.error("Failed to dispatch {} to {}{}{} for tracker ID: {}",
+                        channel, tracker.getEmail(), ccInfo, bccInfo, tracker.getId(), ex);
                 tracker.setStatus("FAILED");
                 trackerRepository.save(tracker);
                 checkAndCompleteCampaignIfDone(tracker.getCampaignId());
@@ -1039,8 +1048,12 @@ public class EmailCampaignService {
                                     campaign.getSmtpPort()
                             );
                         }
-                        logs.add(String.format("[09:%02d AM] Step %d Delivered to %s! Subject: \"%s\"",
-                                stepNum + 2, stepNum, email, parsedSubject));
+                        String ccLog = (step.getCcRecipients() != null && !step.getCcRecipients().isBlank())
+                                ? String.format(" (CC: %s)", step.getCcRecipients().trim()) : "";
+                        String bccLog = (step.getBccRecipients() != null && !step.getBccRecipients().isBlank())
+                                ? String.format(" (BCC: %s)", step.getBccRecipients().trim()) : "";
+                        logs.add(String.format("[09:%02d AM] Step %d Delivered to %s%s%s! Subject: \"%s\"",
+                                stepNum + 2, stepNum, email, ccLog, bccLog, parsedSubject));
                     } catch (Exception ex) {
                         logs.add(String.format("[09:%02d AM] Step %d Dispatch Warning: %s",
                                 stepNum + 2, stepNum, ex.getMessage()));
@@ -1435,6 +1448,13 @@ public class EmailCampaignService {
     @Transactional
     public SequenceStep addSequenceStep(Long campaignId, int stepOrder, String channel, String title, int delayDays,
                                         String subjectTemplate, String bodyTemplate, Boolean isActive) {
+        return addSequenceStep(campaignId, stepOrder, channel, title, delayDays, subjectTemplate, bodyTemplate, isActive, null, null);
+    }
+
+    @Transactional
+    public SequenceStep addSequenceStep(Long campaignId, int stepOrder, String channel, String title, int delayDays,
+                                        String subjectTemplate, String bodyTemplate, Boolean isActive,
+                                        String ccRecipients, String bccRecipients) {
         getCampaign(campaignId);
         List<SequenceStep> existing = sequenceStepRepository.findByCampaignIdOrderByStepOrderAsc(campaignId);
         if (existing.size() >= 8) {
@@ -1444,8 +1464,14 @@ public class EmailCampaignService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Step delay cannot exceed 90 days (received: " + delayDays + " days)");
         }
-        SequenceStep saved = sequenceStepRepository.save(
-                new SequenceStep(campaignId, stepOrder, channel, title, delayDays, subjectTemplate, bodyTemplate, isActive));
+        SequenceStep step = new SequenceStep(campaignId, stepOrder, channel, title, delayDays, subjectTemplate, bodyTemplate, isActive);
+        if (ccRecipients != null && !ccRecipients.trim().isEmpty()) {
+            step.setCcRecipients(ccRecipients.trim());
+        }
+        if (bccRecipients != null && !bccRecipients.trim().isEmpty()) {
+            step.setBccRecipients(bccRecipients.trim());
+        }
+        SequenceStep saved = sequenceStepRepository.save(step);
         logger.info("Added step {} to campaign ID {}", stepOrder, campaignId);
         return saved;
     }

@@ -2,11 +2,16 @@ import { NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 
 export async function POST(request: Request) {
+  let effectiveCc: string[] = [];
+  let effectiveBcc: string[] = [];
+  let toRecipient = '';
+
   try {
     const body = await request.json();
-    const { to, subject, body: emailBody, smtp, cc, bcc } = body;
+    const { to, subject, body: emailBody, smtp, cc, bcc, ccList, bccList } = body;
+    toRecipient = to ? String(to).trim() : '';
 
-    if (!to || !subject || !emailBody) {
+    if (!toRecipient || !subject || !emailBody) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields: to, subject, body' },
         { status: 400 }
@@ -41,32 +46,53 @@ export async function POST(request: Request) {
       greetingTimeout: 15000,
     });
 
+    const parseRecipients = (raw: any): string[] => {
+      if (!raw) return [];
+      const list = Array.isArray(raw) ? raw : String(raw).split(/[,;]/);
+      return list
+        .map((e: any) => String(e).trim().replace(/^[<]+|[>]+$/g, ''))
+        .filter((e: string) => e.length > 0 && e.includes('@'));
+    };
+
+    effectiveCc = parseRecipients(ccList || cc);
+    effectiveBcc = parseRecipients(bccList || bcc);
+
     const mailOptions: Record<string, any> = {
       from: fromName ? `"${fromName}" <${user}>` : user,
-      to,
+      to: toRecipient,
       subject,
       text: emailBody,
     };
 
-    if (cc && typeof cc === 'string' && cc.trim()) {
-      mailOptions.cc = cc.trim();
+    // Empty check safeguard: Only set CC or BCC headers if array has valid addresses
+    if (effectiveCc.length > 0) {
+      mailOptions.cc = effectiveCc;
     }
-    if (bcc && typeof bcc === 'string' && bcc.trim()) {
-      mailOptions.bcc = bcc.trim();
+    if (effectiveBcc.length > 0) {
+      mailOptions.bcc = effectiveBcc;
     }
 
     const info = await transporter.sendMail(mailOptions);
 
-    console.log('[Email Dispatch] Successfully sent email to', to, 'Message ID:', info.messageId);
+    console.log(
+      `[Email Dispatch] Successfully sent email to ${toRecipient} (CC: ${effectiveCc.length > 0 ? JSON.stringify(effectiveCc) : 'none'}, BCC: ${effectiveBcc.length > 0 ? JSON.stringify(effectiveBcc) : 'none'}). ` +
+      `Dispatch accepted by SMTP server: ${JSON.stringify(info.accepted)}, rejected: ${JSON.stringify(info.rejected)}, Message ID: ${info.messageId}, SMTP Response: ${info.response}`
+    );
 
     return NextResponse.json({
       success: true,
-      message: `Email successfully delivered to ${to}`,
+      message: `Email successfully delivered to ${toRecipient}`,
       messageId: info.messageId,
+      accepted: info.accepted,
+      rejected: info.rejected,
+      smtpResponse: info.response,
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
-    console.error('[Email Dispatch] Failed to send email:', error);
+    console.error(
+      `[Email Dispatch] Failed to dispatch email to ${toRecipient || 'unknown'} (CC: ${effectiveCc.length > 0 ? JSON.stringify(effectiveCc) : 'none'}, BCC: ${effectiveBcc.length > 0 ? JSON.stringify(effectiveBcc) : 'none'}):`,
+      error
+    );
     return NextResponse.json(
       { success: false, error: error.message || 'Failed to dispatch email' },
       { status: 500 }

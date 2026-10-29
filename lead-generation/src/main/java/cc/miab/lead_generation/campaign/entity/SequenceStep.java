@@ -66,6 +66,14 @@ public class SequenceStep {
         this(null, campaignId, stepOrder, channel, title, delayDays, subjectTemplate, bodyTemplate, isActive);
     }
 
+    public SequenceStep(Long campaignId, int stepOrder, String channel, String title, int delayDays,
+                        String subjectTemplate, String bodyTemplate, Boolean isActive,
+                        String ccRecipients, String bccRecipients) {
+        this(null, campaignId, stepOrder, channel, title, delayDays, subjectTemplate, bodyTemplate, isActive);
+        this.ccRecipients = ccRecipients;
+        this.bccRecipients = bccRecipients;
+    }
+
     // Backward-compatible constructor
     public SequenceStep(Long campaignId, int stepOrder, int delayDays, String subjectTemplate, String bodyTemplate) {
         this(null, campaignId, stepOrder, "email", "Step #" + stepOrder, delayDays, subjectTemplate, bodyTemplate, true);
@@ -157,5 +165,22 @@ public class SequenceStep {
 
     public void setBccRecipients(String bccRecipients) {
         this.bccRecipients = bccRecipients;
+    }
+
+    // Aliases for convenience and compatibility
+    public String getCc() {
+        return ccRecipients;
+    }
+
+    public void setCc(String cc) {
+        this.ccRecipients = cc;
+    }
+
+    public String getBcc() {
+        return bccRecipients;
+    }
+
+    public void setBcc(String bcc) {
+        this.bccRecipients = bcc;
     }
 }
